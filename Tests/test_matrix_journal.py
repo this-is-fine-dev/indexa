@@ -168,3 +168,38 @@ async def bounded_native_logs_check():
         assert sum(path.stat().st_size for path in files) >= 12000
 asyncio.run(bounded_native_logs_check())
 print('PASS: bounded native subprocess log collection')
+
+async def typing_check():
+    from types import SimpleNamespace
+    from nio import RoomTypingResponse, RoomTypingError
+    from aiohttp import web
+    calls = []
+    reply = RoomTypingResponse('!private:test')
+    async def room_typing(room, **kwargs):
+        calls.append((room, kwargs))
+        return reply
+    transport = module.Transport.__new__(module.Transport)
+    transport.config = {'room_id': '!private:test'}
+    transport.ready = True
+    transport.client = SimpleNamespace(room_typing=room_typing)
+    async def request(value):
+        async def body(): return value
+        return await transport.typing(SimpleNamespace(json=body))
+    for state in (True, True, False):
+        assert (await request({'typing': state})).status == 200
+    assert calls == [('!private:test', {'typing_state': state, 'timeout': 25000}) for state in (True, True, False)]
+    for invalid in ({'typing': 1}, {'typing': 'true'}, {'typing': True, 'room': '!other:test'}, [], {}):
+        try: await request(invalid)
+        except web.HTTPBadRequest: pass
+        else: raise AssertionError('Invalid typing payload accepted')
+    transport.ready = False
+    try: await request({'typing': True})
+    except web.HTTPServiceUnavailable: pass
+    else: raise AssertionError('Typing started before ready')
+    assert (await request({'typing': False})).status == 200
+    reply = RoomTypingError('failed', 'M_UNKNOWN', room_id='!private:test')
+    try: await request({'typing': False})
+    except web.HTTPBadGateway: pass
+    else: raise AssertionError('Typing failure reported as success')
+asyncio.run(typing_check())
+print('PASS: typing start/renew/stop, fixed room, validation and server failures')

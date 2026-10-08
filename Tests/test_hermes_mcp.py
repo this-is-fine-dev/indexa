@@ -12,6 +12,13 @@ spec.loader.exec_module(connector)
 
 
 class HermesMCPTests(unittest.TestCase):
+    def test_indexa_tools_are_direct_despite_a_pinned_old_search_catalog(self):
+        config = {'tools': {'tool_search': {'enabled': 'auto', 'max_search_limit': 12}}}
+        pending = dict(connector.changes(config, 'a' * 64, 'a' * 64, ['notes', 'calendar', 'reminders']))
+        self.assertEqual(pending['tools.tool_search.enabled'], 'off')
+        self.assertNotIn('tools', pending)
+        self.assertEqual(config['tools']['tool_search']['max_search_limit'], 12)
+
     def test_setup_idempotence_rotation_and_unrelated_configuration(self):
         config = {
             'model': {'default': 'user-model'},
@@ -29,7 +36,7 @@ class HermesMCPTests(unittest.TestCase):
             keys, target = args.key.split('.'), config
             for key in keys[:-1]:
                 target = target.setdefault(key, {})
-            target[keys[-1]] = json.loads(args.value)
+            target[keys[-1]] = 'off' if args.key == 'tools.tool_search.enabled' else json.loads(args.value)
         with tempfile.TemporaryDirectory() as directory:
             def sync(token):
                 return connector.synchronize(Path(directory), token, ['notes'], writer, lambda: copy.deepcopy(config), lambda: credential[0])

@@ -20,6 +20,12 @@ def changes(config, current_token, token, modules):
             or any(not isinstance(m, str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,63}', m) for m in modules)):
         raise ValueError('invalid_modules')
     pending = []
+    # Hermes pins tool_search's catalog description across this shared conversation.
+    # ponytail: expose our ten tools directly; revisit search when the catalog grows
+    # and Hermes refreshes pinned catalog descriptions after MCP changes.
+    search = (config.get('tools') or {}).get('tool_search')
+    if not isinstance(search, dict) or search.get('enabled') != 'off':
+        pending.append(('tools.tool_search.enabled', 'off'))
     if current_token != token:
         pending.append(('INDEXA_MCP_TOKEN', token))
     servers = config.get('mcp_servers') or {}

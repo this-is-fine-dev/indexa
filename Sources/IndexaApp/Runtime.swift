@@ -47,6 +47,8 @@ final class Runtime:ObservableObject {
     private var sharedConversation:SharedConversation?
     private var receiver:MatrixReceiver?
     private var matrix:MatrixClient?
+    private var typingState=false
+    private var typingSentAt=Date.distantPast
     private var matrixProcess:Process?
     @Published var matrixHomeserver=""
     @Published var matrixOwner=""
@@ -128,6 +130,7 @@ final class Runtime:ObservableObject {
                 do { try await self.outboxWorker?.tick() } catch { if !Task.isCancelled { self.notice=Self.message(error) } }
             })
             loops.append(poll(every:2) { await self.refreshRecords();await self.refreshMCP() })
+            loops.append(poll(every:2) { await self.refreshTyping() })
             loops.append(Task { [weak self] in
                 var iteration=0
                 while !Task.isCancelled {
@@ -295,6 +298,15 @@ final class Runtime:ObservableObject {
         do { pendingNoteWrites=try NotesRecovery.pending(profileHome:profileHome) }
         catch { if (error as? IndexaError)?.code != "notes_write_in_progress",!Task.isCancelled { notice=Self.message(error) } }
     }
+    private func refreshTyping() async {
+        guard let matrix, let db, let current = try? await db.tasks() else { return }
+        let working=hermesConnected && current.contains { ["submitting","running"].contains($0.state) }
+        guard working != typingState || (working && Date().timeIntervalSince(typingSentAt) >= 10) else { return }
+        do {
+            _ = try await matrix.call("typing",["typing":working])
+            typingState=working;typingSentAt=Date()
+        } catch { /* Ephemeral indicator failures must not interrupt task or message delivery. */ }
+    }
     func togglePause() async { paused.toggle();await agent?.setPaused(paused) }
     func cancelActive() async { do { try await agent?.cancel();notice="Wysłano żądanie zatrzymania. Wcześniejsze efekty nie są cofane." } catch { notice=Self.message(error) } }
     func newConversation() async { notice="Indexa używa jednej wspólnej rozmowy w Hermesie i Matrixie. Napisz, od którego tematu zaczynamy." }
@@ -373,6 +385,8 @@ final class Runtime:ObservableObject {
         let pending=loops;loops.removeAll()
         pending.forEach { $0.cancel() }
         for task in pending { await task.value }
+        if typingState { _ = try? await matrix?.call("typing",["typing":false]) }
+        typingState=false;typingSentAt = .distantPast
         if let app { await app.http.server.shared.shutdown();try? await app.asyncShutdown();self.app=nil }
         // Matrix drains its subprocesses; never start a second stack before it exits.
         let children=[gateway,matrixProcess].compactMap{$0}

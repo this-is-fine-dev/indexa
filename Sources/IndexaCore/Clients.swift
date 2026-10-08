@@ -102,7 +102,7 @@ public struct MatrixClient {
     private let key:String,baseURL:URL,http:HTTPJSON
     public init(key:String,baseURL:URL = URL(string:"http://127.0.0.1:18764")!,http:HTTPJSON = HTTPJSON()) { self.key=key;self.baseURL=baseURL;self.http=http }
     public func call(_ path:String,_ body:[String:Any]? = nil) async throws -> [String:Any] {
-        guard ["health","events","ack","send","devices","trust","qr/start","qr/status","qr/command"].contains(path) else { throw IndexaError("invalid_matrix_operation") }
+        guard ["health","events","ack","send","typing","devices","trust","qr/start","qr/status","qr/command"].contains(path) else { throw IndexaError("invalid_matrix_operation") }
         return try await http.request(baseURL.appendingPathComponent(path),method:body == nil ? "GET":"POST",body:try body.map{try JSONSerialization.data(withJSONObject:$0)},headers:["Authorization":"Bearer \(key)"])
     }
     public func send(id:String,room:String,text:String) async throws -> String {

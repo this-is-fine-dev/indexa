@@ -43,6 +43,10 @@ MCP słucha tylko na `127.0.0.1:43121`; endpointy to `/mcp/notes`, `/mcp/calenda
 
 Indexa automatycznie podłącza MCP do istniejącego profilu `indexa` w Hermesie przy starcie i po zmianie tokena, używając mechanizmu zapisu jego CLI. **Integracje → Ustawienia zaawansowane MCP** pokazują wynik rzeczywistego testu połączenia i pozwalają ponowić konfigurację. Model, persona i pozostałe serwery MCP pozostają bez zmian. Stary plugin `indexa-notes` jest wyłączany, a jego wybór narzędzi migrowany do MCP; otwarte wcześniej procesy Hermesa z tym pluginem wymagają ponownego uruchomienia.
 
+Profil `indexa` używa `tools.tool_search.enabled: "off"`: narzędzia trafiają bezpośrednio do agenta. Omija to zachowywany przez Hermesa stary opis katalogu `tool_search` we wspólnej rozmowie, bez kasowania jej historii.
+
+Podczas zadań przekazywanych przez Indexę Matrix pokazuje wskaźnik „pisze…”. Jest odnawiany co 10 sekund i wygaszany po zakończeniu, błędzie lub oczekiwaniu na zgodę. Po awarii wygasa sam po 25 sekundach; niedostępność wskaźnika nie blokuje wiadomości. Nie obejmuje zadań rozpoczętych bezpośrednio w desktopowym Hermesie.
+
 Token 256-bitowy znajduje się w oddzielnym sejfie `mcp-secrets.vault`, bez Keychain. Hermes otrzymuje kopię w swoim `.env` (0600), a konfiguracja wskazuje `Bearer ${INDEXA_MCP_TOKEN}`. Rotacja zamyka sesje i unieważnia poprzedni token. Tylko inne klienty MCP wymagają ręcznej aktualizacji: ustawienia zaawansowane pozwalają skopiować konfigurację z tokenem i czyszczą niezmieniony schowek po minucie. Cofanie uprawnień dotyczy narzędzi MCP Indexy, nie innych narzędzi niezależnie udostępnionych Hermesowi.
 
 Notes MCP korzysta z dotychczasowego rejestru operacji: nowy zapis wymaga UUID `operation_id`, ponowienie tego samego zapisu tego samego UUID. Niepewny wynik blokuje dalsze zapisy do ręcznego sprawdzenia. Historia w panelu MCP obejmuje ostatnie 512 wywołań od startu serwera, bez treści notatek i argumentów. HomeKit jest odłożony; aplikacja nie publikuje atrap narzędzi Home.

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from aiohttp import web
-from nio import AsyncClient, AsyncClientConfig, MegolmEvent, RoomMessageText, RoomSendResponse, SyncResponse
+from nio import AsyncClient, AsyncClientConfig, MegolmEvent, RoomMessageText, RoomSendResponse, RoomTypingResponse, SyncResponse
 
 ROOT = Path.home() / "Library/Application Support/Indexa"
 
@@ -215,6 +215,19 @@ class Transport:
             self.journal.sent(txn, digest, response.event_id)
             return web.json_response({"event_id": response.event_id})
 
+    async def typing(self, request):
+        data = await request.json()
+        if not isinstance(data, dict) or set(data) != {"typing"} or type(data["typing"]) is not bool:
+            raise web.HTTPBadRequest()
+        if data["typing"] and not self.ready:
+            raise web.HTTPServiceUnavailable()
+        # Fixed private room; a short lease clears the indicator even after a crash.
+        response = await asyncio.wait_for(self.client.room_typing(
+            self.config["room_id"], typing_state=data["typing"], timeout=25000), 5)
+        if not isinstance(response, RoomTypingResponse):
+            raise web.HTTPBadGateway()
+        return web.json_response({"ok": True})
+
     async def devices(self, request):
         owner = self.config["owner_user"]
         devices = self.client.device_store.active_user_devices(owner)
@@ -276,7 +289,7 @@ async def main():
     transport.undecrypted = set(json.loads(transport.journal.get("undecrypted") or "[]"))
     app = web.Application(middlewares=[transport.authenticate], client_max_size=32768)
     app.add_routes([web.get("/health", transport.health), web.get("/events", transport.events),
-                    web.post("/ack", transport.ack), web.post("/send", transport.send),
+                    web.post("/ack", transport.ack), web.post("/send", transport.send), web.post("/typing", transport.typing),
                     web.get("/devices", transport.devices), web.post("/trust", transport.trust),
                     web.post("/qr/start", qr.start), web.get("/qr/status", qr.status), web.post("/qr/command", qr.command)])
     runner = web.AppRunner(app, access_log=None)
