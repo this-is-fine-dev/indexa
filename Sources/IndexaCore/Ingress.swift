@@ -38,7 +38,7 @@ public enum Ingress {
                 guard (fields["test"] == "true") == (headers["x-index-test"] == "true") else { throw Abort(.badRequest,reason:"inconsistent_test") }
             }
             let trigger = headers["x-index-trigger"] ?? (isTest ? "test-event" : "double-click-hold")
-            guard trigger == (isTest ? "test-event" : "double-click-hold") else { throw Abort(.unprocessableEntity,reason:"unsupported_trigger") }
+            guard isTest ? trigger == "test-event" : ["single-click-hold","double-click-hold"].contains(trigger) else { throw Abort(.unprocessableEntity,reason:"unsupported_trigger") }
             let canonical = try JSONEncoder().encode([recorded,trigger,isTest ? "1":"0",text])
             let digest = PebbleAuthentication.digest(canonical)
             let sourceID = headers["x-index-delivery"] ?? "legacy:\(digest)"

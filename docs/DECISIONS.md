@@ -1,5 +1,11 @@
 # Indexa — decyzje i discovery, 2026-10-07
 
+## Pebble Hold & Talk — 2026-10-08, 0.5.6
+
+Odbiornik odrzucał podpisane `single-click-hold` kodem 422 `unsupported_trigger`, choć weryfikacja podpisu obsługiwała ten gest. Test połączenia (`test-event`) przechodził, co maskowało błąd. Screen użytkownika z Recent runs potwierdził 422 dla nagrań i 202 dla testów. Ingress akceptuje teraz oba gesty nagrania; zachowane są podpisy, rozróżnienie testów i deduplikacja. Instrukcja w aplikacji opisuje osobną konfigurację każdego gestu.
+
+Test regresji najpierw odtworzył 422, następnie przeszedł dla obu podpisanych gestów, duplikatów, testu bez zadania i zmienionego nagłówka odrzucanego jako 401. Pełny zestaw Swift: 45 testów zaliczonych (opcjonalny test SDK pominięty). Zainstalowano i ponownie uruchomiono 0.5.6 w `/Applications`; odbiornik i Matrix zwracają 200. Fizyczne nagranie po poprawce czeka na potwierdzenie użytkownika. Bez zmian VPN/DNS/Tailscale.
+
 ## Pebble przez istniejące HTTPS Matrixa — 2026-10-08
 
 Webhook używa `https://<host>.ts.net:8443/pebble/v1/ingest`, czyli istniejącego prywatnego Serve Matrixa → `127.0.0.1:18763`. Proxy przyjmuje tylko dokładny POST tej ścieżki i kieruje go do portu odbiornika przekazanego przez Indexę w `INDEXA_PEBBLE_PORT`. Surowe bajty i nagłówki podpisu trafiają do dotychczasowej weryfikacji HMAC; limit webhooka wynosi 256 KiB. Endpointy administracyjne i health pozostają niedostępne przez proxy. Pozostałe ścieżki Matrixa nie zmieniają celu.

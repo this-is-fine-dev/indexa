@@ -411,7 +411,8 @@ struct SettingsView:View {
             } else if page == .pebble {
             Form {
                 Section("Webhook Pebble") {
-                    Text("Double click & hold → Webhook only → Transcription only").font(.callout)
+                    Text("Hold & talk lub Double click & hold → Webhook only → Transcription only").font(.callout)
+                    Text("Skonfiguruj używany gest, włącz jego webhook i zapisz ustawienia w Pebble. Każdy gest ma osobną konfigurację.").font(.caption)
                     Text("Webhook korzysta z tego samego prywatnego połączenia HTTPS co Matrix, na porcie 8443.").font(.callout)
                     Text(runtime.webhookURL.isEmpty ? "Adres pojawi się, gdy prywatne połączenie na 8443 będzie dostępne.":runtime.webhookURL).textSelection(.enabled)
                     copyButton("Kopiuj adres webhooka",enabled:!runtime.webhookURL.isEmpty) { runtime.webhookURL }
@@ -420,7 +421,7 @@ struct SettingsView:View {
                     Button(showSecret ? "Ukryj sekret":"Pokaż sekret do konfiguracji iPhone’a") { showSecret.toggle();secret=showSecret ? runtime.onboardingSecret():"" }
                     copyButton("Kopiuj sekret Pebble",enabled:runtime.vaultUnlocked,sensitive:true) { runtime.onboardingSecret() }
                     if showSecret { Text(secret).font(.caption.monospaced()).textSelection(.enabled) }
-                    Text("Send test event sprawdza odbiór bez uruchamiania Hermesa.").font(.caption)
+                    Text("Send test event sprawdza odbiór bez uruchamiania Hermesa. Udany test nie oznacza, że konfiguracja gestu została zapisana i włączona.").font(.caption)
                 }
                 Section("Tailscale") {
                     Text(runtime.tailscaleStatus)

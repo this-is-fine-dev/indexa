@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Testing
 import VaporTesting
 @testable import IndexaCore
@@ -8,6 +9,32 @@ func fixture(_ fields: [(String,String)], boundary: String = "indexa-fixture") -
 }
 
 struct IngressTests {
+    @Test func signedRecordingGesturesPersistOnceAndTestsNeverStartTasks() async throws {
+        let db = try Database(url:nil), app = try await Application.make(.testing)
+        let secret = "fixture-signing-key"
+        var config = Configuration(); config.signedWebhooks = true
+        try Ingress.install(on:app,database:db,configuration:config,secret:secret)
+        let timestamp = String(Int(Date().timeIntervalSince1970))
+        for trigger in ["single-click-hold","double-click-hold","test-event"] {
+            let isTest = trigger == "test-event"
+            let fields = [("client","ring"),("recordedAt","1700000000000"),("transcription","Zapisz notatkę")]
+            let body = fixture(fields + (isTest ? [("test","true")] : []))
+            let prefix = Data("v1\n\(timestamp)\n\(trigger)\n\(trigger)\n\(isTest ? 1 : 0)\n".utf8)
+            let signature = HMAC<SHA256>.authenticationCode(for:prefix + Data(body.readableBytesView),using:SymmetricKey(data:Data(secret.utf8))).map { String(format:"%02x",$0) }.joined()
+            var headers: HTTPHeaders = ["Content-Type":"multipart/form-data; boundary=indexa-fixture",
+                "x-index-webhook-version":"1","x-index-timestamp":timestamp,"x-index-delivery":trigger,
+                "x-index-trigger":trigger,"x-index-signature":signature]
+            if isTest { headers.add(name:"x-index-test",value:"true") }
+            for _ in 0..<2 {
+                try await app.test(.POST,"/pebble/v1/ingest",headers:headers,body:body) { #expect($0.status == .accepted) }
+            }
+            #expect(try await db.tasks().count == (trigger == "single-click-hold" ? 1 : 2))
+            headers.replaceOrAdd(name:"x-index-trigger",value:isTest ? "single-click-hold" : "test-event")
+            try await app.test(.POST,"/pebble/v1/ingest",headers:headers,body:body) { #expect($0.status == .unauthorized) }
+        }
+        #expect(try await db.tasks().count == 2)
+        try await app.asyncShutdown()
+    }
     @Test func rejectsUnauthorizedAndPersistsBefore202() async throws {
         let db = try Database(url:nil)
         let app = try await Application.make(.testing)
