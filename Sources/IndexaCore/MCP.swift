@@ -40,8 +40,10 @@ public struct MCPTool: Sendable {
 public struct MCPToolResult: Sendable {
     public let content: [MCPValue]
     public let isError: Bool
-    public init(content: [MCPValue], isError: Bool = false) { self.content = content; self.isError = isError }
-    public static func text(_ text: String, isError: Bool = false) -> Self { .init(content:[.object(["type":.string("text"),"text":.string(text)])],isError:isError) }
+    /// A module-supplied safe description; never derived from arbitrary tool output.
+    public let diagnostic: String?
+    public init(content: [MCPValue], isError: Bool = false, diagnostic: String? = nil) { self.content = content; self.isError = isError; self.diagnostic = diagnostic }
+    public static func text(_ text: String, isError: Bool = false, diagnostic: String? = nil) -> Self { .init(content:[.object(["type":.string("text"),"text":.string(text)])],isError:isError,diagnostic:diagnostic) }
     var wire: MCPValue { .object(["content":.array(content),"isError":.bool(isError)]) }
 }
 public protocol MCPModule: Sendable {
@@ -64,6 +66,7 @@ public struct MCPAuditEntry: Sendable, Identifiable {
     public let module: String
     public let tool: String
     public let result: String
+    public let diagnostic: String?
     public let duration: TimeInterval
     public let session: UUID
 }
@@ -305,7 +308,7 @@ public actor MCPManager {
         }
         do {
             let value = try await module.call(tool:name,arguments:arguments)
-            record(moduleID,tool:name,result:value.isError ? "error":"ok",start:start,session:session)
+            record(moduleID,tool:name,result:value.isError ? "error":"ok",diagnostic:value.isError ? value.diagnostic : nil,start:start,session:session)
             return try result(requestID,value.wire)
         } catch {
             record(moduleID,tool:name,result:"error",start:start,session:session)
@@ -318,8 +321,8 @@ public actor MCPManager {
     private func clearStream(_ session: UUID, streamID: UUID) {
         if sessions[session]?.streamID == streamID { sessions[session]?.events = nil; sessions[session]?.streamID = nil }
     }
-    private func record(_ module: String, tool: String, result: String, start: Date, session: UUID) {
-        audit.append(.init(id:UUID(),date:Date(),module:module,tool:tool,result:result,duration:Date().timeIntervalSince(start),session:session))
+    private func record(_ module: String, tool: String, result: String, diagnostic: String? = nil, start: Date, session: UUID) {
+        audit.append(.init(id:UUID(),date:Date(),module:module,tool:tool,result:result,diagnostic:diagnostic,duration:Date().timeIntervalSince(start),session:session))
         if audit.count > 512 { audit.removeFirst(audit.count-512) }
     }
     private func result(_ id: MCPValue, _ value: MCPValue) throws -> Response { try json(.object(["jsonrpc":.string("2.0"),"id":id,"result":value])) }

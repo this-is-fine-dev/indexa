@@ -3,6 +3,16 @@ import Testing
 @testable import IndexaCore
 
 struct NotesMCPTests {
+    @Test func diagnosticsNeverCopyPrivateToolOutput() async throws {
+        let args: MCPValue = .object(["note_id": .string("x-coredata://synthetic")])
+        let known = NotesMCP(execute: { _ in Data(#"{"error":"notes_automation_failed","text":"private body"}"#.utf8) })
+        let first = try await known.call(tool: "notes_get", arguments: args)
+        #expect(first.isError && first.diagnostic?.contains("Automatyzacji") == true)
+        let unknown = NotesMCP(execute: { _ in Data(#"{"error":"private body"}"#.utf8) })
+        let second = try await unknown.call(tool: "notes_get", arguments: args)
+        #expect(second.isError && second.diagnostic?.contains("private body") == false)
+    }
+
     @Test func nativeProcessRunsWorkerWithValidRequest() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -39,6 +39,8 @@ plist = dict(CFBundleName='Indexa', CFBundleDisplayName='Indexa', CFBundleIdenti
     CFBundleExecutable='Indexa', CFBundlePackageType='APPL', CFBundleShortVersionString=version,
     CFBundleVersion='1' + version, LSMinimumSystemVersion='14.0', LSUIElement=True,
     NSAppleEventsUsageDescription='Indexa zapisuje i odczytuje wskazane notatki Apple Notes przez agenta Hermes po Twojej zgodzie.',
+    NSCalendarsFullAccessUsageDescription='Indexa udostępnia Hermesowi istniejące kalendarze i wydarzenia. Odczyt i tworzenie wydarzeń włączasz osobno w Integracjach.',
+    NSRemindersFullAccessUsageDescription='Indexa udostępnia Hermesowi istniejące listy i przypomnienia. Odczyt, tworzenie i oznaczanie jako wykonane włączasz osobno w Integracjach.',
     NSHighResolutionCapable=True, SUEnableAutomaticChecks=bool(feed), SUAutomaticallyUpdate=False,
     SUVerifyUpdateBeforeExtraction=True)
 if key:

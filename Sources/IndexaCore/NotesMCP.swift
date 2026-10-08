@@ -94,22 +94,39 @@ public struct NotesMCP: MCPModule {
         }
         guard case .object(var values) = arguments, Set(values.keys) == required,
               values.values.allSatisfy({ $0.stringValue.map { !$0.isEmpty && $0.utf8.count <= 16384 } ?? false }) else {
-            return .text("{\"error\":\"invalid_notes_request\"}", isError: true)
+            return .text("{\"error\":\"invalid_notes_request\"}", isError: true, diagnostic: Self.diagnostic("invalid_notes_request"))
         }
         if action != "read", UUID(uuidString: values["operation_id"]!.stringValue!) == nil {
-            return .text("{\"error\":\"invalid_operation_id\"}", isError: true)
+            return .text("{\"error\":\"invalid_operation_id\"}", isError: true, diagnostic: Self.diagnostic("invalid_operation_id"))
         }
         if let note = values["note_id"]?.stringValue, !note.hasPrefix("x-coredata://") {
-            return .text("{\"error\":\"invalid_note_id\"}", isError: true)
+            return .text("{\"error\":\"invalid_note_id\"}", isError: true, diagnostic: Self.diagnostic("invalid_note_id"))
         }
         values["action"] = .string(action)
         do {
             let data = try await execute(JSONEncoder().encode(MCPValue.object(values)))
             let result = try JSONDecoder().decode(MCPValue.self, from: data)
             guard case .object = result else { throw IndexaError("invalid_notes_response") }
-            return .text(String(decoding: data, as: UTF8.self), isError: result["error"] != nil)
+            return .text(String(decoding: data, as: UTF8.self), isError: result["error"] != nil,
+                         diagnostic: result["error"] != nil ? Self.diagnostic(result["error"]?.stringValue ?? "") : nil)
         } catch {
-            return .text("{\"error\":\"notes_unavailable_check_before_retry\",\"needs_review\":true}", isError: true)
+            return .text("{\"error\":\"notes_unavailable_check_before_retry\",\"needs_review\":true}", isError: true, diagnostic: Self.diagnostic("notes_unavailable"))
+        }
+    }
+
+    private static func diagnostic(_ code: String) -> String {
+        // Only fixed descriptions reach the UI/audit; tool output may contain private note text.
+        switch code {
+        case "invalid_notes_request", "invalid_operation_id", "invalid_note_id":
+            return "Hermes przekazał nieprawidłowe dane. Poproś go o poprawienie żądania."
+        case "notes_automation_failed":
+            return "Nie udało się wykonać operacji w Notatkach. Sprawdź dostęp do Notatek w ustawieniach Automatyzacji macOS."
+        case "notes_readback_failed", "notes_timeout_do_not_repeat", "operation_unknown_do_not_repeat", "previous_write_needs_review", "concurrent_or_uncertain_operation":
+            return "Zapis wymaga sprawdzenia. Sprawdź notatkę, a następnie otwórz Przegląd w Indexie."
+        case "operation_id_conflict": return "Hermes użył identyfikatora poprzedniej operacji do innej zmiany."
+        case "permission_denied": return "Brak uprawnienia do tej operacji. Sprawdź dostęp poniżej."
+        case "note_too_large": return "Notatka jest zbyt duża, aby ją odczytać."
+        default: return "Nie udało się wykonać operacji. Przed ponowieniem zapisu sprawdź notatkę."
         }
     }
 }

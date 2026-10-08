@@ -14,7 +14,10 @@ extension Runtime {
             let notes = NotesMCP(python: Configuration.directory.appendingPathComponent("runtime/venv/bin/python"),
                 script: resources.appendingPathComponent("hermes-plugin/mcp_notes.py"),
                 profileHome: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hermes/profiles/indexa"))
-            let manager = try MCPManager(token: token, modules: [notes],
+            guard let db else { throw IndexaError("mcp_database_unavailable") }
+            let organizer = OrganizerStore(database: db)
+            organizerStore = organizer
+            let manager = try MCPManager(token: token, modules: [notes, OrganizerMCP(kind: .reminders, store: organizer), OrganizerMCP(kind: .calendar, store: organizer)],
                 preferencesURL: Configuration.directory.appendingPathComponent("mcp-permissions.json"))
             let server = try await Application.make(.init(name: "production", arguments: ["Indexa MCP"]))
             await manager.install(on: server)
@@ -32,12 +35,13 @@ extension Runtime {
         await mcpManager?.stop()
         if let server = mcpServer { await server.http.server.shared.shutdown(); try? await server.asyncShutdown() }
         mcpServer = nil; mcpManager = nil; mcpStatus = "Zatrzymany"
+        mcpHermesConnected = false
         mcpHermesStatus = "Oczekiwanie na MCP…"
     }
 
     func connectMCPToHermes() async {
         guard !mcpConnecting, let manager = mcpManager, let resources = Bundle.main.resourceURL else { return }
-        mcpConnecting = true; mcpHermesStatus = "Łączenie automatyczne…"
+        mcpConnecting = true; mcpHermesConnected = false; mcpHermesStatus = "Łączenie automatyczne…"
         defer { mcpConnecting = false; mcpConnectionTask = nil }
         do {
             let token = try mcpSecrets.getOrCreate(.mcpAccess)
@@ -46,6 +50,7 @@ extension Runtime {
                 script: resources.appendingPathComponent("connect-hermes-mcp.py")) }
             mcpConnectionTask = task
             _ = try await task.value
+            mcpHermesConnected = true
             mcpHermesStatus = "Połączony automatycznie · profil indexa"
         } catch {
             mcpHermesStatus = "Nie udało się podłączyć Hermesa. Sprawdź jego instalację i wybierz Ponów połączenie."
@@ -56,6 +61,25 @@ extension Runtime {
         guard let manager = mcpManager else { return }
         mcpModules = await manager.snapshots()
         mcpActivity = await manager.auditEntries()
+        organizerIssues = Dictionary(uniqueKeysWithValues: OrganizerKind.allCases.compactMap { kind in
+            organizerStore?.accessIssue(kind).map { (kind.rawValue, $0) }
+        })
+    }
+
+    func organizerScopeDescription(_ module: String) -> String {
+        module == "calendar" ? "Odczyt obejmuje wszystkie istniejące kalendarze, również tylko do odczytu. Tworzenie wydarzeń ma osobne uprawnienie. Bez usuwania i wysyłania zaproszeń." : "Dostęp do istniejących list i przypomnień. Odczyt, tworzenie i oznaczanie jako wykonane mają osobne uprawnienia. Bez usuwania."
+    }
+
+    func requestOrganizerAccess(_ module: String) async {
+        guard !organizerRequesting, let kind = OrganizerKind(rawValue: module), let organizerStore else { return }
+        organizerRequesting = true
+        defer { organizerRequesting = false }
+        do {
+            if try await !organizerStore.requestAccess(kind) {
+                mcpNotice = "Nie przyznano dostępu. Możesz go zmienić w Ustawieniach systemowych → Prywatność i ochrona → \(kind.title)."
+            }
+        } catch { mcpNotice = "Nie udało się uzyskać zgody macOS. Sprawdź ustawienia prywatności systemu." }
+        await refreshMCP()
     }
 
     func setMCPEnabled(_ enabled: Bool, module: String) async {
@@ -72,13 +96,9 @@ extension Runtime {
     func copyMCPConfiguration() {
         do {
             let token = try mcpSecrets.getOrCreate(.mcpAccess)
-            let config = """
-            mcp_servers:
-              indexa-notes:
-                url: "http://127.0.0.1:43121/mcp/notes"
-                headers:
-                  Authorization: "Bearer \(token)"
-            """
+            let config = "mcp_servers:\n" + mcpModules.map { module in
+                "  indexa-\(module.id):\n    url: \"http://127.0.0.1:43121/mcp/\(module.id)\"\n    headers:\n      Authorization: \"Bearer \(token)\""
+            }.joined(separator: "\n")
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(config, forType: .string)
             let change = NSPasteboard.general.changeCount
@@ -103,28 +123,4 @@ extension Runtime {
         } catch { mcpNotice = "Nie zmieniono tokena: \(Self.message(error))" }
     }
 
-    func testMCPConnection() async {
-        do {
-            guard let token = try mcpSecrets.read(.mcpAccess) else { throw IndexaError("mcp_token_missing") }
-            let url = URL(string: "http://127.0.0.1:43121/mcp/notes")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"; request.timeoutInterval = 5
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-            request.httpBody = Data(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"Indexa connection test","version":"1"}}}"#.utf8)
-            let config = URLSessionConfiguration.ephemeral
-            config.urlCache = nil
-            let session = URLSession(configuration: config)
-            defer { session.invalidateAndCancel() }
-            let (data, response) = try await session.data(for: request)
-            guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-                  let sid = response.value(forHTTPHeaderField: "Mcp-Session-Id"),
-                  let result = try JSONSerialization.jsonObject(with: data) as? [String: Any], result["result"] != nil else { throw IndexaError("mcp_handshake_failed") }
-            request.httpMethod = "DELETE"; request.httpBody = nil
-            request.setValue(sid, forHTTPHeaderField: "Mcp-Session-Id")
-            _ = try await session.data(for: request)
-            mcpNotice = "Połączenie MCP i uwierzytelnienie działają. Ten test nie odczytuje ani nie zmienia notatek."
-        } catch { mcpNotice = "Test nie powiódł się: \(Self.message(error))" }
-    }
 }

@@ -120,6 +120,30 @@ public actor Database {
     }
     public func value(_ key: String) throws -> String? { try query("SELECT value FROM meta WHERE key=?",[key]).first?["value"] }
     public func setValue(_ key: String, _ value: String) throws { _ = try query("INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[key,value]) }
+
+    public func beginOrganizerOperation(module: String, operationID: String, digest: String) throws -> String? {
+        let key = "organizer-operation:\(module):\(operationID)"
+        return try transaction {
+            if let saved = try value(key) {
+                let receipt = try JSONDecoder().decode([String:String].self, from: Data(saved.utf8))
+                guard receipt["digest"] == digest else { throw IndexaError("organizer_operation_conflict") }
+                guard let id = receipt["id"] else { throw IndexaError("organizer_write_uncertain") }
+                return id
+            }
+            try setValue(key, String(decoding: JSONEncoder().encode(["digest": digest]), as: UTF8.self))
+            return nil
+        }
+    }
+
+    public func finishOrganizerOperation(module: String, operationID: String, digest: String, itemID: String) throws {
+        let key = "organizer-operation:\(module):\(operationID)"
+        try transaction {
+            guard let saved = try value(key),
+                  let receipt = try? JSONDecoder().decode([String:String].self, from: Data(saved.utf8)),
+                  receipt == ["digest": digest] else { throw IndexaError("organizer_operation_conflict") }
+            try setValue(key, String(decoding: JSONEncoder().encode(["digest": digest, "id": itemID]), as: UTF8.self))
+        }
+    }
     private func conversation() throws -> String {
         if let current = try value("conversation") { return current }
         let id = "indexa-" + UUID().uuidString

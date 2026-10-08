@@ -35,10 +35,14 @@ final class Runtime:ObservableObject {
     @Published var mcpNotice=""
     @Published var mcpHermesStatus="Oczekiwanie na MCP…"
     @Published var mcpConnecting=false
+    @Published var mcpHermesConnected=false
     @Published var mcpRotating=false
     var mcpConnectionTask:Task<HermesMCPConnection,Error>?
     @Published var mcpModules=[MCPModuleState]()
     @Published var mcpActivity=[MCPAuditEntry]()
+    var organizerStore:OrganizerStore?
+    @Published var organizerIssues=[String:String]()
+    @Published var organizerRequesting=false
     private var agent:AgentWorker?
     private var sharedConversation:SharedConversation?
     private var receiver:MatrixReceiver?

@@ -46,6 +46,10 @@ class HermesMCPTests(unittest.TestCase):
             self.assertEqual(writes, [])
             self.assertTrue(sync('b' * 64))
             self.assertEqual(writes, ['INDEXA_MCP_TOKEN'])
+            writes.clear()
+            self.assertTrue(connector.synchronize(Path(directory), 'b' * 64, ['notes', 'calendar', 'reminders'], writer, lambda: copy.deepcopy(config), lambda: credential[0]))
+            self.assertEqual(config['platform_toolsets']['api_server'], ['indexa-notes', 'indexa-calendar', 'indexa-reminders'])
+            self.assertFalse(connector.synchronize(Path(directory), 'b' * 64, ['notes', 'calendar', 'reminders'], writer, lambda: copy.deepcopy(config), lambda: credential[0]))
 
     def test_explicit_allowlist_preserves_other_servers_and_does_not_enable_all(self):
         config = {'mcp_servers': {'chosen': {}, 'unselected': {}},

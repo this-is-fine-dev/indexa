@@ -25,26 +25,79 @@ struct MenuView:View {
 struct MainView:View {
     @ObservedObject var runtime:Runtime
     @ObservedObject private var navigation=AppWindow.shared
+    private var selectedPage: AppPage { navigation.page == .pebble || navigation.page == .diagnostics ? .settings : navigation.page }
     var body:some View {
         VStack(spacing:0) {
             HStack(spacing:6) {
-                ForEach(AppPage.allCases,id:\.self) { page in
+                ForEach([AppPage.dashboard, .integrations, .matrix, .settings],id:\.self) { page in
                     Button { navigation.page=page } label: {
                         Label(page.title,systemImage:page.symbol)
                             .padding(.horizontal,10).padding(.vertical,8)
-                            .background(navigation.page == page ? Color.accentColor.opacity(0.15):.clear,in:RoundedRectangle(cornerRadius:7))
-                    }.buttonStyle(.plain).accessibilityAddTraits(navigation.page == page ? [.isSelected]:[])
+                            .background(selectedPage == page ? Color.accentColor.opacity(0.15):.clear,in:RoundedRectangle(cornerRadius:7))
+                    }.buttonStyle(.plain).accessibilityAddTraits(selectedPage == page ? [.isSelected]:[])
                 }
                 Spacer(minLength:0)
             }.padding(12)
             Divider()
+            if navigation.page == .pebble || navigation.page == .diagnostics {
+                HStack {
+                    Button { navigation.page = .settings } label: { Label("Ustawienia", systemImage: "chevron.left") }
+                    Spacer()
+                    Text(navigation.page.title).foregroundStyle(.secondary)
+                }.padding(.horizontal, 24).padding(.top, 12)
+            }
             Group {
                 if navigation.page == .dashboard { Dashboard(runtime:runtime) }
                 else if navigation.page == .integrations { IntegrationsView(runtime:runtime) }
                 else if navigation.page == .diagnostics { DiagnosticsView(runtime:runtime) }
                 else { SettingsView(runtime:runtime,page:navigation.page) }
             }.frame(maxWidth:.infinity,maxHeight:.infinity)
+            Divider()
+            ConnectionFooter(runtime: runtime)
         }.frame(minWidth:800,minHeight:650)
+    }
+}
+
+private struct ConnectionFooter: View {
+    @ObservedObject var runtime: Runtime
+    var body: some View {
+        HStack(spacing: 20) {
+            ConnectionBadge(name: "Hermes", connected: runtime.hermesConnected, detail: runtime.hermesStatus)
+            ConnectionBadge(name: "Tailscale", connected: runtime.tailscaleConnected, detail: runtime.tailscaleStatus,
+                            warning: runtime.tailscaleStatus.contains("UWAGA"))
+            ConnectionBadge(name: "Matrix", connected: runtime.matrixConnected, detail: runtime.matrixStatus)
+            Spacer(minLength: 0)
+            Button { AppWindow.shared.page = .diagnostics } label: { Image(systemName: "stethoscope") }
+                .buttonStyle(.plain).help("Diagnostyka").accessibilityLabel("Otwórz diagnostykę")
+        }.font(.caption).padding(.horizontal, 20).padding(.vertical, 12)
+            .background(.bar)
+    }
+}
+
+private struct ConnectionBadge: View {
+    let name: String
+    let connected: Bool
+    let detail: String
+    var warning = false
+    @State private var expanded = false
+    private var waiting: Bool { detail.hasPrefix("Uruchamianie") || detail.hasPrefix("Sprawdzanie") }
+    private var state: String { warning ? "Uwaga" : connected ? "Połączony" : waiting ? "Łączenie…" : "Brak połączenia" }
+    var body: some View {
+        Button { expanded.toggle() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: warning ? "exclamationmark.circle.fill" : connected ? "checkmark.circle.fill" : waiting ? "clock" : "exclamationmark.circle.fill")
+                    .foregroundStyle(warning ? Color.orange : connected ? .green : waiting ? .secondary : .orange)
+                Text(name).fontWeight(.medium)
+                Text(state).foregroundStyle(.secondary)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain).help(detail).accessibilityLabel("\(name): \(state). Szczegóły połączenia")
+            .popover(isPresented: $expanded, arrowEdge: .top) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(name).font(.headline)
+                    Text(detail).textSelection(.enabled)
+                    Button("Diagnostyka") { expanded = false; AppWindow.shared.page = .diagnostics }
+                }.padding(18).frame(width: 300, alignment: .leading)
+            }
     }
 }
 
@@ -64,11 +117,6 @@ struct Dashboard:View {
                 Spacer()
             }
             Label(runtime.summary,systemImage:runtime.statusSymbol).font(.title2)
-            HStack(spacing:20) {
-                Label(runtime.hermesConnected ? "Hermes połączony":"Hermes niedostępny",systemImage:runtime.hermesConnected ? "checkmark.circle":"exclamationmark.circle")
-                Label(runtime.matrixConnected ? "Rozmowa połączona":"Oczekiwanie na Matrix",systemImage:runtime.matrixConnected ? "lock.shield":"clock")
-            }.font(.callout).foregroundStyle(.secondary)
-            if !runtime.tailscaleConnected { Text("Tailscale jest niedostępny. Połączenie telefonu może nie działać; szczegóły w diagnostyce.").font(.caption).foregroundStyle(.orange) }
             if !runtime.notice.isEmpty { Text(runtime.notice).font(.callout).textSelection(.enabled) }
             if runtime.vaultNeedsPassphrase {
                 GroupBox("Istniejący sejf") {
@@ -134,7 +182,6 @@ struct Dashboard:View {
                 }
             }
             }
-            Text("Mac musi być włączony i dostępny. Uśpienie przerywa odbiór; powiadomienia wymagają zgody iOS.").font(.caption).foregroundStyle(.secondary)
         }.padding(24)
         .onDisappear { vaultPassphrase="" }
         .onReceive(NotificationCenter.default.publisher(for:NSWindow.willCloseNotification)) { notification in
@@ -241,7 +288,8 @@ struct SettingsView:View {
                     Button("Zaloguj Element X kodem QR") { showQR=true }
                         .buttonStyle(.borderedProminent).disabled(!runtime.matrixQRAvailable)
                     if !runtime.matrixQRAvailable { Text("Logowanie QR będzie dostępne po uruchomieniu lokalnego serwera.").font(.caption) }
-                    Text("Włącz Tailscale na iPhonie. W Element X wybierz logowanie kodem QR. Dane do logowania hasłem znajdziesz poniżej.").foregroundStyle(.secondary)
+                    Text("Włącz Tailscale na iPhonie i wybierz w Element X logowanie kodem QR.").foregroundStyle(.secondary)
+                    DisclosureGroup("Logowanie hasłem") {
                     LabeledContent("Serwer") {
                         HStack {
                             Text(runtime.matrixHomeserver).textSelection(.enabled)
@@ -259,10 +307,10 @@ struct SettingsView:View {
                         copyButton("Kopiuj hasło",enabled:runtime.vaultUnlocked,sensitive:true) { runtime.ownerPassword() }
                     }
                     if !password.isEmpty { Text(password).font(.caption.monospaced()).textSelection(.enabled) }
-                    Text(runtime.matrixStatus)
+                    }
                     Button("Wyślij test powiadomienia…") { confirmNotification=true }.disabled(!runtime.paired)
                 }
-                Section("Urządzenia właściciela") {
+                Section { DisclosureGroup("Urządzenia właściciela") {
                     Text("Po zalogowaniu zatwierdź tylko urządzenie, którego identyfikator sprawdzisz w ustawieniach sesji Element X.").font(.caption)
                     Button("Odśwież urządzenia") { Task { await runtime.refreshDevices() } }
                     ForEach(runtime.matrixDevices) { device in
@@ -273,7 +321,7 @@ struct SettingsView:View {
                             else { Button("Zatwierdź urządzenie…") { trust=device } }
                         }
                     }
-                }
+                } }
             }.formStyle(.grouped)
             } else if page == .pebble {
             Form {
@@ -305,24 +353,28 @@ struct SettingsView:View {
                 Section("Działanie") {
                     Toggle("Uruchamiaj przy logowaniu",isOn:Binding(get:{runtime.loginEnabled},set:{runtime.setLogin($0)}))
                     Text("Zamknięcie okna zostawia aplikację w pasku menu. Zakończ zatrzymuje odbiór.").font(.caption)
-                    Button("Połącz ponownie Hermes i Matrix…") { confirmReconnect=true }.disabled(runtime.restarting)
+                    Button("Skonfiguruj pierścień Pebble") { AppWindow.shared.page = .pebble }
                 }
-                Section("Hermes · profil indexa") {
+                Section { DisclosureGroup("Ustawienia Hermesa") {
                     Button("Otwórz Hermes") { runtime.openHermes() }
-                    Text("Model i serwery MCP konfigurujesz poniższymi poleceniami w Terminalu. Zmiany dotyczą profilu indexa.").font(.caption)
+                    Text("Narzędzia Indexy włączysz w Integracjach. Tutaj zmienisz model, personę i zewnętrzne MCP profilu indexa.").font(.caption)
                     copyButton("Kopiuj polecenie: model",enabled:true) { "~/.local/bin/hermes -p indexa model" }
                     copyButton("Kopiuj polecenie: MCP",enabled:true) { "~/.local/bin/hermes -p indexa mcp" }
                     Button("Otwórz plik persony SOUL.md") {
                         NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hermes/profiles/indexa/SOUL.md"))
                     }
                     Text("Po zmianie ustawień wybierz ponowne połączenie usług. Instrukcje zadań Indexy nadal obowiązują.").font(.caption)
-                }
-                Section("Prywatność i historia") {
+                } }
+                Section { DisclosureGroup("Prywatność i historia") {
                     Stepper("Treść lokalnej kolejki: \(contentDays) dni",value:$contentDays,in:1...365)
                     Stepper("Metadane kolejki: \(metadataDays) dni",value:$metadataDays,in:1...3650)
                     Text("Ta retencja dotyczy wyłącznie lokalnej kolejki Indexy. Nie usuwa historii Hermesa, wiadomości Matrix ani notatek. Aktywne zadania i niedostarczone odpowiedzi pozostają do wyjaśnienia.").font(.caption)
                     Button("Zapisz retencję") { save() }
-                }
+                } }
+                Section { DisclosureGroup("Rozwiązywanie problemów") {
+                    Button("Połącz ponownie Hermes i Matrix…") { confirmReconnect=true }.disabled(runtime.restarting)
+                    Button("Otwórz diagnostykę") { AppWindow.shared.page = .diagnostics }
+                } }
             }.formStyle(.grouped)
             }
         }.padding(12)
