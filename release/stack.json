@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "python": "3.11",
+  "packages": {
+    "matrix-synapse": "1.162.0",
+    "matrix-nio": "0.26.0",
+    "vodozemac": "0.10.0"
+  },
+  "mas": "1.26.0",
+  "postgres_major": "17",
+  "hermes_profile": "indexa",
+  "mas_sha256": "448f4c895498d3e0de86cd1e14d0a6f6f55f9d0ddc98c2e01a8a24c378107d81"
+}

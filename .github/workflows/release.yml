@@ -1,0 +1,53 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release settings
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]{1,3}\.[0-9]{1,2}\.[0-9]{1,2}$ ]]
+          test -n "$SPARKLE_PRIVATE_KEY"
+          echo "INDEXA_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Build native QR helper
+        run: cargo build --release --locked --manifest-path matrix/qr/Cargo.toml
+      - name: Test Swift and Python
+        run: |
+          bash scripts/test-local.sh
+          python3 -B Tests/test_notes.py
+          python3 -B Tests/test_runtime_update.py
+      - name: Package app
+        run: bash scripts/build-app.sh
+      - name: Sign appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          mkdir -p dist/update
+          cp "dist/Indexa-$INDEXA_VERSION.zip" dist/update/
+          if [[ -f "release-notes/$INDEXA_VERSION.md" ]]; then
+            cp "release-notes/$INDEXA_VERSION.md" "dist/update/Indexa-$INDEXA_VERSION.md"
+          else
+            previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+            git log --pretty='- %s' "${previous:+$previous..}$GITHUB_REF_NAME" > "dist/update/Indexa-$INDEXA_VERSION.md"
+          fi
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | .build/artifacts/sparkle/Sparkle/bin/generate_appcast \
+            --ed-key-file - --embed-release-notes \
+            --download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/" \
+            -o dist/update/appcast.xml dist/update
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            "dist/Indexa-$INDEXA_VERSION.zip" dist/update/appcast.xml \
+            --title "Indexa $INDEXA_VERSION" --notes-file "dist/update/Indexa-$INDEXA_VERSION.md"

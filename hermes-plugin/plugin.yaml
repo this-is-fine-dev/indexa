@@ -1,0 +1,5 @@
+name: indexa-notes
+version: "0.1.0"
+description: "Controlled create/read/append in the Indexa folder of Apple Notes, with approval and read-back."
+provides_tools:
+  - indexa_notes
