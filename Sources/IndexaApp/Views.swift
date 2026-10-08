@@ -136,6 +136,9 @@ struct Dashboard:View {
             Text("Mac musi być włączony i dostępny. Uśpienie przerywa odbiór; powiadomienia wymagają zgody iOS.").font(.caption).foregroundStyle(.secondary)
         }.padding(24)
         .onDisappear { vaultPassphrase="" }
+        .onReceive(NotificationCenter.default.publisher(for:NSWindow.willCloseNotification)) { notification in
+            if (notification.object as? NSWindow)?.identifier?.rawValue == "indexa" { vaultPassphrase="" }
+        }
         .confirmationDialog("Zamknąć sprawdzone operacje notatek?",isPresented:$confirmNotes) {
             Button("Potwierdzam sprawdzenie") { runtime.resolveNotes(noteReview);noteReview=[] }
         } message: { Text("Potwierdzasz sprawdzenie \(noteReview.count) operacji w folderze Indexa w Notatkach. Odblokujemy kolejne zapisy; żadna z tych operacji nie zostanie powtórzona. Zadania wymagające sprawdzenia zamknij po sprawdzeniu także ich pozostałych skutków.") }
