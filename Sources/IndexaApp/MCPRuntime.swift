@@ -23,13 +23,33 @@ extension Runtime {
             mcpManager = manager; mcpServer = server
             mcpStatus = "Działa lokalnie · 127.0.0.1:43121"
             await refreshMCP()
+            await connectMCPToHermes()
         } catch { mcpStatus = "Nie uruchomiono MCP: \(Self.message(error))" }
     }
 
     func stopMCP() async {
+        if let task = mcpConnectionTask { _ = try? await task.value }
         await mcpManager?.stop()
         if let server = mcpServer { await server.http.server.shared.shutdown(); try? await server.asyncShutdown() }
         mcpServer = nil; mcpManager = nil; mcpStatus = "Zatrzymany"
+        mcpHermesStatus = "Oczekiwanie na MCP…"
+    }
+
+    func connectMCPToHermes() async {
+        guard !mcpConnecting, let manager = mcpManager, let resources = Bundle.main.resourceURL else { return }
+        mcpConnecting = true; mcpHermesStatus = "Łączenie automatyczne…"
+        defer { mcpConnecting = false; mcpConnectionTask = nil }
+        do {
+            let token = try mcpSecrets.getOrCreate(.mcpAccess)
+            let modules = await manager.snapshots().map(\.id)
+            let task = Task { try await HermesMCPConnection.synchronize(token: token, modules: modules,
+                script: resources.appendingPathComponent("connect-hermes-mcp.py")) }
+            mcpConnectionTask = task
+            _ = try await task.value
+            mcpHermesStatus = "Połączony automatycznie · profil indexa"
+        } catch {
+            mcpHermesStatus = "Nie udało się podłączyć Hermesa. Sprawdź jego instalację i wybierz Ponów połączenie."
+        }
     }
 
     func refreshMCP() async {
@@ -71,11 +91,15 @@ extension Runtime {
     }
 
     func rotateMCPToken() async {
+        guard !mcpConnecting, !mcpRotating, mcpManager != nil else { return }
+        mcpRotating = true
+        defer { mcpRotating = false }
         do {
             let token = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0).map { String(format: "%02x", $0) }.joined() }
             try mcpSecrets.write(.mcpAccess, value: token)
             try await mcpManager?.rotateToken(token)
-            mcpNotice = "Token zmieniony; poprzedni już nie działa. Zaktualizuj konfigurację klientów MCP."
+            await connectMCPToHermes()
+            mcpNotice = "Token zmieniony; poprzedni już nie działa. Hermes jest synchronizowany automatycznie. Jeśli używasz innych klientów MCP, zaktualizuj ich token."
         } catch { mcpNotice = "Nie zmieniono tokena: \(Self.message(error))" }
     }
 

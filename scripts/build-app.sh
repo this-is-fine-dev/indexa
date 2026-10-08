@@ -17,7 +17,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/matrix" "$app/Contents/R
 cp matrix/service.py matrix/qr_session.py matrix/native_services.py matrix/public_proxy.py "$app/Contents/Resources/matrix/"
 cp matrix/qr/target/release/indexa-qr "$app/Contents/Resources/matrix/"
 cp hermes-plugin/__init__.py hermes-plugin/mcp_notes.py hermes-plugin/notes.js hermes-plugin/plugin.yaml "$app/Contents/Resources/hermes-plugin/"
-cp release/stack.json scripts/prepare-runtime.py "$app/Contents/Resources/"
+cp release/stack.json scripts/prepare-runtime.py scripts/connect-hermes-mcp.py "$app/Contents/Resources/"
 cp "$binary_dir/Indexa" "$app/Contents/MacOS/Indexa"
 ditto "$framework" "$app/Contents/Frameworks/Sparkle.framework"
 export INDEXA_BUILD_VERSION="$version"

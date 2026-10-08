@@ -33,6 +33,10 @@ final class Runtime:ObservableObject {
     let mcpSecrets=SecretStore(url:Configuration.directory.appendingPathComponent("mcp-secrets.vault"))
     @Published var mcpStatus="Uruchamianie…"
     @Published var mcpNotice=""
+    @Published var mcpHermesStatus="Oczekiwanie na MCP…"
+    @Published var mcpConnecting=false
+    @Published var mcpRotating=false
+    var mcpConnectionTask:Task<HermesMCPConnection,Error>?
     @Published var mcpModules=[MCPModuleState]()
     @Published var mcpActivity=[MCPAuditEntry]()
     private var agent:AgentWorker?

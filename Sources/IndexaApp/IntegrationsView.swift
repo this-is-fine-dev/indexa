@@ -42,11 +42,17 @@ struct IntegrationsView: View {
                     }
                 }
             }
-            Section("Dostęp klienta MCP") {
-                Button("Kopiuj konfigurację dla Hermesa") { runtime.copyMCPConfiguration() }
-                    .disabled(runtime.mcpManager == nil)
-                Text("Kopiowana konfiguracja zawiera token dostępu. Po zmianie tokena zaktualizuj go we wszystkich klientach.").font(.caption).foregroundStyle(.secondary)
-                Button("Zmień token dostępu…") { confirmRotation = true }.disabled(runtime.mcpManager == nil)
+            Section("Hermes") {
+                Label(runtime.mcpHermesStatus, systemImage: "link")
+                Text("Indexa sama podłącza swoje moduły i aktualizuje token. Wybierz uprawnienia powyżej — niczego nie musisz kopiować.").font(.caption).foregroundStyle(.secondary)
+                Button("Ponów połączenie") { Task { await runtime.connectMCPToHermes() } }
+                    .disabled(runtime.mcpManager == nil || runtime.mcpConnecting || runtime.mcpRotating)
+                Button("Zmień token dostępu…") { confirmRotation = true }
+                    .disabled(runtime.mcpManager == nil || runtime.mcpConnecting || runtime.mcpRotating)
+                DisclosureGroup("Inny klient MCP") {
+                    Button("Kopiuj konfigurację MCP") { runtime.copyMCPConfiguration() }.disabled(runtime.mcpManager == nil)
+                    Text("Konfiguracja zawiera token. Tylko w innych klientach trzeba aktualizować go ręcznie.").font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section("Aktywność agenta") {
                 Text("Ostatnie 512 wywołań od uruchomienia MCP. Bez treści notatek, poleceń i sekretów.").font(.caption).foregroundStyle(.secondary)
@@ -70,6 +76,6 @@ struct IntegrationsView: View {
         .formStyle(.grouped)
         .confirmationDialog("Zmienić token MCP?", isPresented: $confirmRotation) {
             Button("Zmień token") { Task { await runtime.rotateMCPToken() } }
-        } message: { Text("Bieżące połączenia zostaną zamknięte. Poprzedni token natychmiast przestanie działać.") }
+        } message: { Text("Bieżące połączenia zostaną zamknięte. Poprzedni token przestanie działać, a Indexa automatycznie przekaże nowy Hermesowi.") }
     }
 }
