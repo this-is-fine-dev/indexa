@@ -346,7 +346,6 @@ struct SettingsView:View {
     @State private var metadataDays=30
     @State private var confirmReconnect=false
     @State private var confirmNotification=false
-    @State private var confirmServe=false
     @State private var matrixToken=""
     @State private var matrixPickle=""
     @State private var matrixPassword=""
@@ -413,10 +412,11 @@ struct SettingsView:View {
             Form {
                 Section("Webhook Pebble") {
                     Text("Double click & hold → Webhook only → Transcription only").font(.callout)
-                    Text(runtime.webhookURL.isEmpty ? "Adres pojawi się po połączeniu Tailscale.":runtime.webhookURL).textSelection(.enabled)
+                    Text("Webhook korzysta z tego samego prywatnego połączenia HTTPS co Matrix, na porcie 8443.").font(.callout)
+                    Text(runtime.webhookURL.isEmpty ? "Adres pojawi się, gdy prywatne połączenie na 8443 będzie dostępne.":runtime.webhookURL).textSelection(.enabled)
                     copyButton("Kopiuj adres webhooka",enabled:!runtime.webhookURL.isEmpty) { runtime.webhookURL }
                     Toggle("Weryfikuj podpisy Pebble (Sign requests)",isOn:$signed)
-                    Text(signed ? "Włącz Sign requests na iPhonie i wprowadź wspólny sekret.":"Tryb starszego Pebble: ustaw Authorization: Bearer <sekret>. Nie jest fallbackiem po błędnym podpisie.").font(.caption)
+                    Text(signed ? "W Pebble włącz Sign requests i wklej sekret z Indexy. Dodatkowe nagłówki nie są potrzebne.":"Tryb starszego Pebble: ustaw Authorization: Bearer <sekret>. Nie jest fallbackiem po błędnym podpisie.").font(.caption)
                     Button(showSecret ? "Ukryj sekret":"Pokaż sekret do konfiguracji iPhone’a") { showSecret.toggle();secret=showSecret ? runtime.onboardingSecret():"" }
                     copyButton("Kopiuj sekret Pebble",enabled:runtime.vaultUnlocked,sensitive:true) { runtime.onboardingSecret() }
                     if showSecret { Text(secret).font(.caption.monospaced()).textSelection(.enabled) }
@@ -424,9 +424,8 @@ struct SettingsView:View {
                 }
                 Section("Tailscale") {
                     Text(runtime.tailscaleStatus)
-                    HStack { Button("Odśwież") { Task { await runtime.refreshTailscale() } }
-                        Button(runtime.serveEnabled ? "Wyłącz Serve":"Włącz prywatny Serve…") { if runtime.serveEnabled { Task { await runtime.setServe(false) } } else { confirmServe=true } }
-                    }
+                    Text("Tailscale musi być połączony także na iPhonie. Indexa tylko odczytuje stan połączenia; nie zmienia ustawień VPN ani DNS.").font(.caption)
+                    Button("Odśwież stan") { Task { await runtime.refreshTailscale() } }
                 }
                 Button("Zapisz ustawienia webhooka") { save() }
             }.formStyle(.grouped)
@@ -482,7 +481,6 @@ struct SettingsView:View {
             Button("Uruchom ponownie") { Task { await runtime.reconnect() } }
         } message: { Text("Trwające zadanie może zostać przerwane i wymagać sprawdzenia skutków. Rozmowy i konto pozostaną zachowane.") }
         .confirmationDialog("Wysłać test na Matrix?",isPresented:$confirmNotification) { Button("Wyślij test") { Task { await runtime.testNotification() } } }
-        .confirmationDialog("Udostępnić odbiornik w prywatnym Tailscale?",isPresented:$confirmServe) { Button("Włącz Serve") { Task { await runtime.setServe(true) } } } message: { Text("Dostęp wymaga aktywnego Tailscale na iPhonie. Udostępniamy webhook i prosty health; API Hermesa pozostaje na Macu.") }
     }
     private func clearSecrets() { secret="";showSecret=false;password="";matrixToken="";matrixPickle="";matrixPassword="" }
     private func copyButton(_ title:String,enabled:Bool,sensitive:Bool=false,value:@escaping ()->String) -> some View {

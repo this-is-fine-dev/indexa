@@ -3,25 +3,31 @@ import Testing
 @testable import IndexaCore
 
 struct TailscaleTests {
-    @Test func privateServeRemovesOnlyItsPublicExposure() throws {
-        let original:[String:Any] = ["TCP":["8443":["HTTPS":true]],"AllowFunnel":["other.ts.net:8443":true]]
-        let config=try TailscaleClient.serveConfiguration(current:original,host:"indexa.ts.net",port:18761,enabled:true)
-        #expect((config["AllowFunnel"] as? [String:Bool])?["indexa.ts.net:443"] != true)
-        #expect((config["AllowFunnel"] as? [String:Bool])?["other.ts.net:8443"] == true)
-        var publicConfig=config
-        publicConfig["AllowFunnel"]=["indexa.ts.net:443":true,"other.ts.net:8443":true]
-        let privateConfig=try TailscaleClient.serveConfiguration(current:publicConfig,host:"indexa.ts.net",port:18761,enabled:true)
-        #expect((privateConfig["AllowFunnel"] as? [String:Bool])?["indexa.ts.net:443"] != true)
-        #expect((privateConfig["TCP"] as? [String:Any])?["8443"] != nil)
+    @Test func webhookUsesExistingPrivateMatrixEndpoint() {
+        let ready = TailscaleSnapshot(state: "Running", host: "indexa.ts.net", online: true, serve: true, funnel: false)
+        #expect(ready.webhookURL == "https://indexa.ts.net:8443/pebble/v1/ingest")
+        let missing = TailscaleSnapshot(state: "Running", host: "indexa.ts.net", online: true, serve: false, funnel: false)
+        #expect(missing.webhookURL.isEmpty)
+        let publicEndpoint = TailscaleSnapshot(state: "Running", host: "indexa.ts.net", online: true, serve: true, funnel: true)
+        #expect(publicEndpoint.webhookURL.isEmpty)
     }
-    @Test func refusesToOverwriteOtherServices() throws {
-        let other:[String:Any] = ["TCP":["443":["HTTPS":true]],"Web":["other.ts.net:443":["Handlers":["/":["Proxy":"http://127.0.0.1:9999"]]]]]
-        #expect(throws:(any Error).self) { try TailscaleClient.serveConfiguration(current:other,host:"indexa.ts.net",port:18761,enabled:true) }
-        let config=try TailscaleClient.serveConfiguration(current:["TCP":["8443":["HTTPS":true]]],host:"indexa.ts.net",port:18761,enabled:true)
-        #expect((config["AllowFunnel"] as? [String:Bool])?["indexa.ts.net:443"] != true)
-        #expect((config["TCP"] as? [String:Any])?["8443"] != nil)
-        let off=try TailscaleClient.serveConfiguration(current:config,host:"indexa.ts.net",port:18761,enabled:false)
-        #expect((off["TCP"] as? [String:Any])?["8443"] != nil)
-        #expect((off["TCP"] as? [String:Any])?["443"] == nil)
+    @Test func onlyExistingPrivateHTTPSProxyProvidesWebhookURL() {
+        let status: [String:Any] = ["BackendState":"Running", "Self":["Online":true, "DNSName":"indexa.ts.net."]]
+        let configuration: [String:Any] = ["TCP":["8443":["HTTPS":true]],
+            "Web":["indexa.ts.net:8443":["Handlers":["/":["Proxy":"http://127.0.0.1:18763"]]]]]
+        let snapshot = TailscaleClient.snapshot(status:status, serveConfig:configuration)
+        #expect(snapshot.webhookURL == "https://indexa.ts.net:8443/pebble/v1/ingest")
+        #expect(snapshot.serve && !snapshot.funnel)
+        for bad: [String:Any] in [[:],
+            configuration.merging(["AllowFunnel":["indexa.ts.net:8443":true]]) { _,new in new },
+            configuration.merging(["TCP":["8443":["HTTPS":false]]]) { _,new in new },
+            configuration.merging(["Web":["indexa.ts.net:8443":["Handlers":["/":["Proxy":"http://127.0.0.1:9999"]]]]]) { _,new in new },
+            configuration.merging(["Web":["indexa.ts.net:8443":["Handlers":["/":["Proxy":"http://127.0.0.1:18763"], "/pebble":["Proxy":"http://127.0.0.1:9999"]]]]]) { _,new in new }
+        ] {
+            #expect(TailscaleClient.snapshot(status:status, serveConfig:bad).webhookURL.isEmpty)
+        }
+        #expect(TailscaleClient.snapshot(status:[:], serveConfig:configuration).webhookURL.isEmpty)
+        let offline = status.merging(["BackendState":"Stopped"]) { _,new in new }
+        #expect(TailscaleClient.snapshot(status:offline, serveConfig:configuration).webhookURL.isEmpty)
     }
 }

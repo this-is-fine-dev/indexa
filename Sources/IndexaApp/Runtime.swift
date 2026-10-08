@@ -14,7 +14,6 @@ final class Runtime:ObservableObject {
     @Published var matrixStatus="Uruchamianie Matrix…"
     @Published var tailscaleStatus="Sprawdzanie…"
     @Published var webhookURL=""
-    @Published var serveEnabled=false
     @Published var paired=false
     @Published var paused=false
     @Published var tasks=[TaskRecord]()
@@ -216,7 +215,9 @@ final class Runtime:ObservableObject {
         let process=Process()
         process.executableURL=Configuration.directory.appendingPathComponent("runtime/venv/bin/python")
         process.arguments=[script.path]
-        process.environment=Self.childEnvironment()
+        var environment=Self.childEnvironment()
+        environment["INDEXA_PEBBLE_PORT"]=String(config.port)
+        process.environment=environment
         let input=Pipe();process.standardInput=input
         process.standardOutput=FileHandle.nullDevice;process.standardError=FileHandle.nullDevice
         var names:[SecretName]=[.matrixTransport,.matrixBotToken,.matrixPickle]
@@ -363,17 +364,12 @@ final class Runtime:ObservableObject {
     }
     func refreshTailscale() async {
         do {
-            let snapshot=try await tailscale.snapshot(port:config.port)
+            let snapshot=try await tailscale.snapshot()
             publishIfChanged(\.tailscaleConnected, snapshot.online)
-            publishIfChanged(\.serveEnabled, snapshot.serve)
             publishIfChanged(\.webhookURL, snapshot.webhookURL)
-            publishIfChanged(\.tailscaleStatus, snapshot.online ? (snapshot.funnel ? "UWAGA: odbiornik publiczny przez Funnel" : (snapshot.serve ? "Prywatny Serve skonfigurowany":"Online · Serve wyłączony")) : snapshot.state)
+            publishIfChanged(\.tailscaleStatus, snapshot.online ? (snapshot.funnel ? "UWAGA: port 8443 udostępniony publicznie przez Funnel" : (snapshot.serve ? "Prywatne połączenie Matrix i Pebble · 8443":"Online · brak prywatnego połączenia na 8443")) : snapshot.state)
         }
-        catch { tailscaleConnected=false;tailscaleStatus="Niedostępny: \(Self.message(error))";serveEnabled=false }
-    }
-    func setServe(_ enabled:Bool) async {
-        do { guard ready else { throw IndexaError("receiver_not_ready") };try await tailscale.setServe(port:config.port,enabled:enabled);await refreshTailscale();notice=enabled ? "Prywatny Serve włączony. Tailscale musi działać na iPhonie.":"Serve wyłączony." }
-        catch { notice="\(Self.message(error)). Pierwsze włączenie może wymagać włączenia HTTPS w panelu Tailscale." }
+        catch { publishIfChanged(\.tailscaleConnected, false);publishIfChanged(\.tailscaleStatus, "Niedostępny: \(Self.message(error))");publishIfChanged(\.webhookURL, "") }
     }
     func saveSettings(_ updated:Configuration) async {
         do {

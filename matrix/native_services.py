@@ -67,7 +67,7 @@ class NativeServices:
         await self.http_ready('http://127.0.0.1:18765/_matrix/client/versions')
         await self.spawn(self.root / 'runtime/mas/mas-cli', 'server', '-c', self.root / 'matrix-qr/mas.yaml', name='mas')
         await self.http_ready('http://127.0.0.1:18766/.well-known/openid-configuration')
-        self.proxy = await create_proxy()
+        self.proxy = await create_proxy(pebble_port=os.environ.get("INDEXA_PEBBLE_PORT"))
 
     async def start(self):
         try:

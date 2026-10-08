@@ -1,5 +1,13 @@
 # Indexa — decyzje i discovery, 2026-10-07
 
+## Pebble przez istniejące HTTPS Matrixa — 2026-10-08
+
+Webhook używa `https://<host>.ts.net:8443/pebble/v1/ingest`, czyli istniejącego prywatnego Serve Matrixa → `127.0.0.1:18763`. Proxy przyjmuje tylko dokładny POST tej ścieżki i kieruje go do portu odbiornika przekazanego przez Indexę w `INDEXA_PEBBLE_PORT`. Surowe bajty i nagłówki podpisu trafiają do dotychczasowej weryfikacji HMAC; limit webhooka wynosi 256 KiB. Endpointy administracyjne i health pozostają niedostępne przez proxy. Pozostałe ścieżki Matrixa nie zmieniają celu.
+
+Z aplikacji usunięto zapisujące API Tailscale i przyciski włączania Serve. Indexa odczytuje istniejącą konfigurację, a adres webhooka pokazuje tylko dla prywatnego HTTPS 8443 prowadzącego do jej proxy. Zmiana nie wymaga nowego portu, zmiany konfiguracji Tailscale, DNS, tras ani służbowego OpenVPN. Po aktualizacji należy skopiować nowy adres do Pebble; sekret i opcja Sign requests pozostają te same.
+
+Walidacja po instalacji 0.5.5: podpisany test przez HTTPS 8443 → 202, powtórzenie → deduplikacja, zmodyfikowana treść → 401, endpoint wersji Matrixa → 200. Konfiguracja Serve, DNS, brama domyślna i procesy OpenVPN były identyczne przed instalacją i po niej. Test z fizycznego iPhone'a wymaga podmiany adresu w Pebble przez użytkownika.
+
 ## Istniejąca rozmowa Matrix jako Bot Chat w Hermes Desktop
 
 Widok BOTS otwierał pustą sesję desktopową, podczas gdy historia Matrixa znajdowała się w osobnej sesji API. `scripts/link-hermes-bot-chat.py` powiązał bieżący identyfikator rozmowy bridge z natywnym rejestrem Hermesa (dokładny tytuł `Bot Chat`, hidden=1). Pustą wcześniejszą sesję zachowano jako archiwalną; zmiana metadanych jest transakcyjna i odmawia zastąpienia czatu zawierającego wiadomości. Kopia sprzed zmiany: `~/.hermes/profiles/indexa/before-indexa-bot-chat.sqlite` (0600). Nie zmieniano kodu Hermesa ani treści wiadomości.
