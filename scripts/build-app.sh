@@ -18,6 +18,14 @@ cp matrix/service.py matrix/media.py matrix/qr_session.py matrix/native_services
 cp matrix/qr/target/release/indexa-qr "$app/Contents/Resources/matrix/"
 cp hermes-plugin/__init__.py hermes-plugin/mcp_notes.py hermes-plugin/notes.js hermes-plugin/plugin.yaml "$app/Contents/Resources/hermes-plugin/"
 cp release/stack.json scripts/prepare-runtime.py scripts/connect-hermes-mcp.py "$app/Contents/Resources/"
+iconset='dist/Indexa.iconset'
+mkdir -p "$iconset"
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" assets/Indexa-icon.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
+  double=$((size * 2))
+  sips -z "$double" "$double" assets/Indexa-icon.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/Indexa.icns"
 cp "$binary_dir/Indexa" "$app/Contents/MacOS/Indexa"
 ditto "$framework" "$app/Contents/Frameworks/Sparkle.framework"
 export INDEXA_BUILD_VERSION="$version"
@@ -36,6 +44,7 @@ if feed:
     if not key:
         raise SystemExit('Update feed requires release/sparkle-public-key.txt')
 plist = dict(CFBundleName='Indexa', CFBundleDisplayName='Indexa', CFBundleIdentifier='local.fine.indexa',
+    CFBundleIconFile='Indexa',
     CFBundleExecutable='Indexa', CFBundlePackageType='APPL', CFBundleShortVersionString=version,
     CFBundleVersion='1' + version, LSMinimumSystemVersion='14.0', LSUIElement=True,
     NSAppleEventsUsageDescription='Indexa zapisuje i odczytuje wskazane notatki Apple Notes przez agenta Hermes po Twojej zgodzie.',

@@ -63,6 +63,8 @@ Lokalne kopie załączników podlegają retencji treści, z zachowaniem plików 
 
 ## Aktualizacje
 
-Sparkle 2.9.2 sprawdza podpisane archiwa z GitHub Releases. Kanał jest przygotowany pod publiczne repozytorium; dopóki repozytorium pozostaje prywatne, pobieranie aktualizacji bez logowania nie zadziała. Token GitHub nie trafia do aplikacji.
+Sparkle 2.9.2 sprawdza podpisane archiwa z GitHub Releases. Publiczny kanał nie wymaga logowania. W menu lub Ustawieniach wybierz „Sprawdź aktualizacje…”, potem instalację i ponowne uruchomienie; Sparkle wymienia aplikację i uruchamia ją ponownie po zakończeniu usług. Token GitHub nie trafia do aplikacji.
 
 Procedura wydania, zakres aktualizacji i odzyskiwanie: [docs/RELEASE.md](docs/RELEASE.md).
+
+Aplikacja jest instalowana w `/Applications/Indexa.app`. `python3 scripts/install-app.py` przenosi poprzednią kopię z `~/Applications`, odmawia instalacji podczas aktywnego zadania, sprawdza podpis i uruchamia aplikację. Dane pozostają w katalogu użytkownika. Kolejne wydania publikuj jako GitHub Release z podpisanym `appcast.xml`; samo wypchnięcie kodu nie udostępnia aktualizacji.

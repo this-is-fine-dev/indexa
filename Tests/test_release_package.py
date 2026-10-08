@@ -17,7 +17,7 @@ with zipfile.ZipFile(archive) as zipped:
     key = base64.b64decode(info['SUPublicEDKey'], validate=True)
     assert key == base64.b64decode(Path('release/sparkle-public-key.txt').read_bytes(), validate=True)
     names = set(zipped.namelist())
-    for required in ('MacOS/Indexa', 'Resources/matrix/indexa-qr', 'Resources/matrix/service.py',
+    for required in ('MacOS/Indexa', 'Resources/Indexa.icns', 'Resources/matrix/indexa-qr', 'Resources/matrix/service.py',
                      'Resources/matrix/media.py', 'Resources/connect-hermes-mcp.py',
                      'Resources/stack.json', 'Resources/prepare-runtime.py', 'Resources/hermes-plugin/__init__.py',
                      'Frameworks/Sparkle.framework/Versions/B/Sparkle'):
@@ -25,6 +25,8 @@ with zipfile.ZipFile(archive) as zipped:
     assert not any(name.endswith(('.vault.key', 'private-key', 'bridge.sqlite', 'secrets.enc')) for name in names)
     assert info['SUFeedURL'] == 'https://github.com/this-is-fine-dev/indexa/releases/latest/download/appcast.xml'
     assert info['SUVerifyUpdateBeforeExtraction'] is True
+    assert info['CFBundleIconFile'] == 'Indexa'
+    assert zipped.read(prefix + 'Resources/Indexa.icns').startswith(b'icns')
 assert archive.stat().st_size == int(enclosure.attrib['length'])
 signature = enclosure.attrib['{http://www.andymatuschak.org/xml-namespaces/sparkle}edSignature']
 Ed25519PublicKey.from_public_bytes(key).verify(base64.b64decode(signature, validate=True), archive.read_bytes())

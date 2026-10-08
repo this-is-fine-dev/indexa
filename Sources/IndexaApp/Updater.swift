@@ -15,7 +15,7 @@ final class Updater: ObservableObject {
               let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
               Data(base64Encoded: key)?.count == 32 else { return }
         controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
-        status = "Automatyczne sprawdzanie aktualizacji jest włączone."
+        status = "Po pobraniu aktualizacji wybierz „Zainstaluj i uruchom ponownie”. Indexa sama wznowi usługi."
     }
 
     func checkForUpdates() {
