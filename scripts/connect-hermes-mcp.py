@@ -10,6 +10,88 @@ from pathlib import Path
 import re
 import sys
 from types import SimpleNamespace
+import tempfile
+import asyncio
+import hashlib
+
+
+async def probe_catalog(token, modules):
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client, create_mcp_http_client
+    catalog = {}
+    async with create_mcp_http_client(headers={'Authorization': 'Bearer ' + token}) as http:
+        for module in modules:
+            async with streamable_http_client('http://127.0.0.1:43121/mcp/' + module, http_client=http) as streams:
+                async with ClientSession(*streams[:2]) as session:
+                    await session.initialize()
+                    listed = await session.list_tools()
+                    catalog[module] = [tool.model_dump(mode='json', exclude_none=True) for tool in listed.tools]
+    return catalog
+
+
+def refresh_conversation_cache(profile, catalog, session_db):
+    # Hermes persists tool schemas AND persona text. Refresh these snapshots only
+    # when their inputs change; history, IDs, model and persona remain intact.
+    soul = (profile / 'SOUL.md').read_text() if (profile / 'SOUL.md').exists() else ''
+    fingerprint = hashlib.sha256(json.dumps([catalog, soul], sort_keys=True).encode()).hexdigest()
+    marker = profile / 'indexa-catalog-fingerprint'
+    if marker.exists() and marker.read_text() == fingerprint:
+        return False
+    sessions = session_db.list_sessions_rich(search_query='Bot Chat', include_hidden=True,
+                                             order_by_last_active=True, limit=100)
+    for session in sessions:
+        if session.get('title') != 'Bot Chat' or session.get('archived'):
+            continue
+        session_id = session_db.get_compression_tip(session['id']) or session['id']
+        session_db.update_session_tool_names(session_id, None)
+        session_db.update_system_prompt(session_id, None)
+    marker.write_text(fingerprint)
+    marker.chmod(0o600)
+    return True
+
+
+def synchronize_style(profile):
+    """One owned section; preserve the user's persona and keep a first-change backup."""
+    path = profile / 'SOUL.md'
+    previous = path.read_text() if path.exists() else ''
+    start, end = '<!-- indexa-style:start -->', '<!-- indexa-style:end -->'
+    block = start + '''
+## Rozmowa w Indexie
+
+Odpowiadaj naturalnie, krótko i po polsku. Najpierw wynik, zwykle 1–3 zdania.
+Nie relacjonuj narzędzi, liczby rekordów, MCP, API, identyfikatorów ani kodów błędów,
+chyba że użytkownik poprosi o szczegóły techniczne. Powiedz po prostu, co ustaliłeś,
+czego nie udało się sprawdzić i jaki jest następny krok. Bez urzędowego tonu,
+automatycznego „Masz rację”, zbędnych przeprosin i wyliczania wykonanych kroków.
+Nie ukrywaj niepewności i nie deklaruj niepotwierdzonego sukcesu.
+
+Pytanie o urlop obejmuje też loty i noclegi. Dla wskazanego okresu najpierw
+przejrzyj wydarzenia bez filtra tytułu i wszystkie strony next_offset.
+Historycznych rezerwacji nie przedstawiaj jako przyszłego urlopu.
+Brak wpisu w danych Indexy nie dowodzi braku wpisu w aplikacji Kalendarz;
+sugestie Siri mogą być widoczne w niej osobno od zapisanych wydarzeń.
+''' + end
+    if start in previous:
+        before, remaining = previous.split(start, 1)
+        if end not in remaining:
+            raise ValueError('invalid_indexa_style_section')
+        updated = before + block + remaining.split(end, 1)[1]
+    else:
+        updated = previous.rstrip() + '\n\n' + block + '\n'
+    if updated == previous:
+        return False
+    backup = profile / 'indexa-persona-before-style.md'
+    if previous and not backup.exists():
+        with os.fdopen(os.open(backup, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600), 'w') as file:
+            file.write(previous)
+    with tempfile.NamedTemporaryFile(mode='w', dir=profile, prefix='.indexa-style-', delete=False) as file:
+        temporary = Path(file.name)
+        try:
+            file.write(updated); file.flush(); os.fsync(file.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return True
 
 
 def changes(config, current_token, token, modules):
@@ -21,7 +103,7 @@ def changes(config, current_token, token, modules):
         raise ValueError('invalid_modules')
     pending = []
     # Hermes pins tool_search's catalog description across this shared conversation.
-    # ponytail: expose our ten tools directly; revisit search when the catalog grows
+    # ponytail: expose our small catalog directly; revisit search when it grows
     # and Hermes refreshes pinned catalog descriptions after MCP changes.
     search = (config.get('tools') or {}).get('tool_search')
     if not isinstance(search, dict) or search.get('enabled') != 'off':
@@ -104,13 +186,19 @@ def main():
                 import yaml
                 from dotenv import dotenv_values
                 from hermes_cli.config import _cmd_config_set
-                from hermes_cli.mcp_config import _probe_single_server
                 load = lambda: yaml.safe_load((profile / 'config.yaml').read_text()) or {}
                 read_token = lambda: dotenv_values(profile / '.env').get('INDEXA_MCP_TOKEN')
                 changed = synchronize(profile, token, modules, _cmd_config_set, load, read_token)
+                changed = synchronize_style(profile) or changed
                 stage = 'hermes_mcp_connection_failed'
-                config = load()
-                tools = sum(len(_probe_single_server('indexa-' + m, config['mcp_servers']['indexa-' + m], connect_timeout=5)) for m in modules)
+                catalog = asyncio.run(asyncio.wait_for(probe_catalog(token, modules), 25))
+                tools = sum(map(len, catalog.values()))
+                from hermes_state import SessionDB
+                database = SessionDB(profile / 'state.db')
+                try:
+                    changed = refresh_conversation_cache(profile, catalog, database) or changed
+                finally:
+                    database.close()
         print(json.dumps({'ok': True, 'changed': changed, 'tools': tools}))
     except BaseException:
         # Never forward third-party exception text: config failures can contain credentials.

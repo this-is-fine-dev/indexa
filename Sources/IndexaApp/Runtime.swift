@@ -106,6 +106,7 @@ final class Runtime:ObservableObject {
             guard generation == startupGeneration else { return }
             let database=try Database(url:Configuration.directory.appendingPathComponent("bridge.sqlite"));db=database
             try await database.recover()
+            _ = try await database.matrixFeedback()
             guard generation == startupGeneration else { return }
             let webhookSecret=try secrets.getOrCreate(.pebbleSigning),key=try secrets.getOrCreate(.hermesAPI)
             let hermes=HermesClient(baseURL:URL(string:config.hermesURL)!,key:key)
@@ -131,12 +132,18 @@ final class Runtime:ObservableObject {
             })
             loops.append(poll(every:2) { await self.refreshRecords();await self.refreshMCP() })
             loops.append(poll(every:2) { await self.refreshTyping() })
+            loops.append(poll(every:2) { await self.refreshMatrixFeedback() })
             loops.append(Task { [weak self] in
                 var iteration=0
                 while !Task.isCancelled {
                     guard let self else { return }
                     await self.refreshTailscale()
-                    if iteration % 360 == 0 { try? await database.prune(contentDays:self.config.contentRetentionDays,metadataDays:self.config.metadataRetentionDays) }
+                    if iteration % 360 == 0 {
+                        try? await database.prune(contentDays:self.config.contentRetentionDays,metadataDays:self.config.metadataRetentionDays)
+                        if let paths=try? await database.retainedAttachmentPaths() {
+                            try? Attachment.prune(protected:paths,before:Date().addingTimeInterval(-Double(self.config.contentRetentionDays)*86400))
+                        }
+                    }
                     iteration+=1
                     do { try await Task.sleep(nanoseconds:10_000_000_000) } catch { return }
                 }
@@ -285,7 +292,8 @@ final class Runtime:ObservableObject {
             hermesConnected=features["run_submission"] as? Bool == true
             hermesStatus=hermesConnected ? "API gotowe" : "API nie obsługuje zadań"
             if hermesConnected,let owner=try await db.value("owner_chat") {
-                try await sharedConversation?.tick(destination:owner)
+                do { try await sharedConversation?.tick(destination:owner) }
+                catch { notice="Nie udało się odświeżyć historii rozmowy. Spróbuję ponownie." }
                 try await agent.tick(destination:owner)
                 try await agent.expireApprovals()
             }
@@ -297,6 +305,16 @@ final class Runtime:ObservableObject {
         catch { if !Task.isCancelled { notice=Self.message(error) } }
         do { pendingNoteWrites=try NotesRecovery.pending(profileHome:profileHome) }
         catch { if (error as? IndexaError)?.code != "notes_write_in_progress",!Task.isCancelled { notice=Self.message(error) } }
+    }
+    private func refreshMatrixFeedback() async {
+        guard let db, let matrix, matrixConnected else { return }
+        do {
+            for item in try await db.matrixFeedback() {
+                let state=["queued":"accepted","submitting":"running","stopping":"running","interrupted":"cancelled"][item.state] ?? item.state
+                _ = try await matrix.call("feedback",["id":item.id,"state":state])
+                try await db.setValue("matrix-feedback:"+item.id,item.state)
+            }
+        } catch { /* Durable state is retried; reactions never block commands or replies. */ }
     }
     private func refreshTyping() async {
         guard let matrix, let db, let current = try? await db.tasks() else { return }

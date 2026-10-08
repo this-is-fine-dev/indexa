@@ -97,6 +97,11 @@ def main():
     profile = Path.home() / '.hermes/profiles' / manifest['hermes_profile']
     if not (profile / 'config.yaml').is_file():
         raise RuntimeError('runtime_hermes_profile_missing')
+    # An owned Synapse override avoids rewriting the user's server configuration.
+    media_limits = root / 'matrix-media-limits.yaml'
+    if not media_limits.exists() or media_limits.read_text() != 'max_upload_size: 20M\n':
+        media_limits.write_text('max_upload_size: 20M\n')
+        media_limits.chmod(0o600)
     install_plugin(resources / 'hermes-plugin', profile / 'plugins/indexa-notes')
     print('runtime_compatible')
 

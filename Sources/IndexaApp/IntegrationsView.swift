@@ -76,7 +76,7 @@ private struct MCPModuleCard: View {
     let module: MCPModuleState
     @State private var expanded = false
     private var latest: MCPAuditEntry? { runtime.mcpActivity.first { $0.module == module.id } }
-    private var symbol: String { ["notes": "note.text", "reminders": "checklist", "calendar": "calendar"][module.id] ?? "puzzlepiece.extension" }
+    private var symbol: String { ["files": "doc.richtext", "notes": "note.text", "reminders": "checklist", "calendar": "calendar"][module.id] ?? "puzzlepiece.extension" }
     private var status: (String, String, Color) {
         if !module.enabled { return ("Wyłączone", "minus.circle", .secondary) }
         if runtime.mcpManager == nil { return ("Serwer niedostępny", "exclamationmark.circle.fill", .orange) }
@@ -123,7 +123,7 @@ private struct MCPModuleCard: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(module.id == "notes" ? "Tylko folder Indexa w domyślnym koncie Notatek. Bez usuwania." : runtime.organizerScopeDescription(module.id))
                         .font(.caption).foregroundStyle(.secondary)
-                    if module.id != "notes" { OrganizerAccessView(runtime: runtime, module: module) }
+                    if ["calendar","reminders"].contains(module.id) { OrganizerAccessView(runtime: runtime, module: module) }
                     ForEach(permissions, id: \.self) { permission in
                         Toggle(label(permission), isOn: Binding(get: { module.permissions.contains(permission) }, set: { enabled in
                             Task { await runtime.setMCPPermission(permission, enabled: enabled, module: module.id) }

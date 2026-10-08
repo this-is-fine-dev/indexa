@@ -12,6 +12,35 @@ spec.loader.exec_module(connector)
 
 
 class HermesMCPTests(unittest.TestCase):
+    def test_schema_change_refreshes_only_bot_chat_cache_once(self):
+        class Sessions:
+            writes = []
+            def list_sessions_rich(self, **kwargs):
+                return [{'id': 'root', 'title': 'Bot Chat'}, {'id': 'other', 'title': 'Other'}, {'id': 'old', 'title': 'Bot Chat', 'archived': True}]
+            def get_compression_tip(self, session): return 'tip'
+            def update_session_tool_names(self, session, value): self.writes.append(('tools', session, value))
+            def update_system_prompt(self, session, value): self.writes.append(('prompt', session, value))
+        with tempfile.TemporaryDirectory() as directory:
+            sessions = Sessions()
+            profile = Path(directory)
+            catalog = {'calendar': [{'name': 'calendar_events', 'inputSchema': {'offset': 'integer'}}]}
+            self.assertTrue(connector.refresh_conversation_cache(profile, catalog, sessions))
+            self.assertEqual(sessions.writes, [('tools', 'tip', None), ('prompt', 'tip', None)])
+            self.assertFalse(connector.refresh_conversation_cache(profile, catalog, sessions))
+            (profile / 'SOUL.md').write_text('Nowy styl')
+            self.assertTrue(connector.refresh_conversation_cache(profile, catalog, sessions))
+
+    def test_style_preserves_persona_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory)
+            original = 'Moja własna persona.\n'
+            (profile / 'SOUL.md').write_text(original)
+            self.assertTrue(connector.synchronize_style(profile))
+            self.assertFalse(connector.synchronize_style(profile))
+            self.assertTrue((profile / 'SOUL.md').read_text().startswith(original))
+            self.assertEqual((profile / 'indexa-persona-before-style.md').read_text(), original)
+            self.assertEqual((profile / 'SOUL.md').stat().st_mode & 0o777, 0o600)
+
     def test_indexa_tools_are_direct_despite_a_pinned_old_search_catalog(self):
         config = {'tools': {'tool_search': {'enabled': 'auto', 'max_search_limit': 12}}}
         pending = dict(connector.changes(config, 'a' * 64, 'a' * 64, ['notes', 'calendar', 'reminders']))

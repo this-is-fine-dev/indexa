@@ -63,7 +63,7 @@ class NativeServices:
         raise RuntimeError('native_service_start_timeout')
 
     async def servers(self):
-        await self.spawn(sys.executable, '-m', 'synapse.app.homeserver', '-c', self.root / 'matrix-qr/homeserver.yaml', name='synapse')
+        await self.spawn(sys.executable, '-m', 'synapse.app.homeserver', '-c', self.root / 'matrix-qr/homeserver.yaml', '-c', self.root / 'matrix-media-limits.yaml', name='synapse')
         await self.http_ready('http://127.0.0.1:18765/_matrix/client/versions')
         await self.spawn(self.root / 'runtime/mas/mas-cli', 'server', '-c', self.root / 'matrix-qr/mas.yaml', name='mas')
         await self.http_ready('http://127.0.0.1:18766/.well-known/openid-configuration')

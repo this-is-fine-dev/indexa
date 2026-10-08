@@ -84,7 +84,7 @@ async def setup(credentials):
             database={'name': 'sqlite3', 'args': {'database': str(directory / 'homeserver.sqlite')}},
             media_store_path=str(directory / 'media'), enable_registration=False, allow_guest_access=False,
             enable_metrics=False, report_stats=False, federation_domain_whitelist=[], trusted_key_servers=[],
-            suppress_key_server_warning=True, url_preview_enabled=False, max_upload_size='5M', push={'include_content': False},
+            suppress_key_server_warning=True, url_preview_enabled=False, max_upload_size='20M', push={'include_content': False},
             matrix_authentication_service={'enabled': True, 'endpoint': 'http://127.0.0.1:18766/', 'secret_path': str(directory / 'mas.secret')},
             experimental_features={'msc4108_enabled': True},
             signing_key_path=str(directory / (host + '.signing.key')),

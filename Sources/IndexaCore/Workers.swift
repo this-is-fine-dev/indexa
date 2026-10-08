@@ -19,7 +19,13 @@ public actor AgentWorker {
             let durable=(features["runs_idempotency"] as? [String:Any])?["durable"] as? Bool == true
             let session=try await hermes.canonicalConversation()
             try await db.bindConversation(session)
-            let payload=try hermes.payload(input:task.text,session:session)
+            let payload:Data
+            do {
+                payload=try await Task.detached { [hermes] in try hermes.payload(input:task.text,session:session,attachments:task.attachments) }.value
+            } catch {
+                try await db.finish(task.id,state:"failed",result:Attachment.message(for:error),destination:destination,code:"attachment_unreadable")
+                return
+            }
             try await db.markSubmitting(task.id,payload:payload)
             do {
                 let run:String
@@ -96,7 +102,12 @@ public actor OutboxWorker {
               ["pending","retry_wait"].contains(item.state),item.nextAttempt <= now else { return }
         try await db.setDelivery(item.id,state:"sending")
         do {
-            let message=try await matrix.send(id:item.id,room:item.destination,text:item.body)
+            let attachment:Attachment?
+            if item.kind.contains(":attachment:") {
+                guard let metadata=item.markup else { throw IndexaError("attachment_metadata_missing") }
+                attachment=try JSONDecoder().decode(Attachment.self,from:Data(metadata.utf8))
+            } else { attachment=nil }
+            let message=try await matrix.send(id:item.id,room:item.destination,text:item.body,attachment:attachment)
             try await db.setDelivery(item.id,state:"delivered",messageID:message)
         } catch let e as APIError {
             if e.ambiguous || e.code == 429 || e.code == 408 || e.code >= 500 || e.code < 0 {
@@ -119,7 +130,11 @@ public actor MatrixReceiver {
             guard let id=event["id"] as? String,let room=event["room"] as? String,let sender=event["sender"] as? String,
                   let text=event["text"] as? String,!text.isEmpty,text.utf8.count <= 16384,
                   MatrixIdentity.allowed(room:room,user:sender,ownerRoom:owner,ownerUser:user) else { throw IndexaError("unauthorized_matrix_event") }
-            if text.hasPrefix("!") || text.hasPrefix("/") {
+            let attachments=try (event["attachments"] as? [[String:Any]]).map { try JSONDecoder().decode([Attachment].self,from:JSONSerialization.data(withJSONObject:$0)) } ?? []
+            guard attachments.count <= 1 else { throw IndexaError("invalid_matrix_attachments") }
+            if event["attachment_error"] != nil {
+                try await db.enqueue(event:id,kind:"attachment-error",destination:room,body:"Nie udało się odebrać załącznika. Obsługuję zdjęcia i dokumenty do 20 MB. Głosówki i wideo nie są jeszcze obsługiwane.")
+            } else if attachments.isEmpty && (text.hasPrefix("!") || text.hasPrefix("/")) {
                 if try await db.claimCommand(id) {
                     let pieces=text.split(whereSeparator:{$0.isWhitespace}).map(String.init)
                     var answer="Indexa: !status, !new, !cancel. Zwykła wiadomość kontynuuje rozmowę."
@@ -141,8 +156,10 @@ public actor MatrixReceiver {
                 } else if try await db.value("matrix-command:"+id) == "processing" {
                     try await db.enqueue(event:id,destination:room,body:"Indexa: przerwano obsługę komendy; sprawdź stan na Macu. Nie ponawiam działania automatycznie.")
                 }
-            } else { _ = try await db.ingestMatrix(id:id,text:text,recorded:event["timestamp"] as? Double ?? Date().timeIntervalSince1970) }
+            } else { _ = try await db.ingestMatrix(id:id,text:text,recorded:event["timestamp"] as? Double ?? Date().timeIntervalSince1970,attachments:attachments) }
             _ = try await matrix.call("ack",["id":id])
+            if event["attachment_error"] != nil { _ = try? await matrix.call("feedback",["id":id,"state":"failed"]) }
+            else if attachments.isEmpty && (text.hasPrefix("!") || text.hasPrefix("/")) { _ = try? await matrix.call("feedback",["id":id,"state":"completed"]) }
         }
     }
 }

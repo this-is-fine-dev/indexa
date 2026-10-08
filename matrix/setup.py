@@ -73,7 +73,7 @@ async def bootstrap(credentials):
             database={"name": "sqlite3", "args": {"database": str(directory / "homeserver.sqlite")}},
             media_store_path=str(directory / "media"), enable_registration=False, allow_guest_access=False,
             enable_metrics=False, report_stats=False, federation_domain_whitelist=[], trusted_key_servers=[],
-            suppress_key_server_warning=True, url_preview_enabled=False, max_upload_size="5M",
+            suppress_key_server_warning=True, url_preview_enabled=False, max_upload_size="20M",
             push={"include_content": False}, password_config={"enabled": True},
             signing_key_path=str(directory / (hostname + ".signing.key")),
             log_config=str(directory / (hostname + ".log.config")), pid_file=str(directory / "homeserver.pid"))

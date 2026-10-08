@@ -368,7 +368,7 @@ struct SettingsView:View {
                 Section { DisclosureGroup("Prywatność i historia") {
                     Stepper("Treść lokalnej kolejki: \(contentDays) dni",value:$contentDays,in:1...365)
                     Stepper("Metadane kolejki: \(metadataDays) dni",value:$metadataDays,in:1...3650)
-                    Text("Ta retencja dotyczy wyłącznie lokalnej kolejki Indexy. Nie usuwa historii Hermesa, wiadomości Matrix ani notatek. Aktywne zadania i niedostarczone odpowiedzi pozostają do wyjaśnienia.").font(.caption)
+                    Text("Retencja obejmuje lokalną kolejkę i załączniki Indexy. Nie usuwa historii Hermesa, wiadomości Matrix ani notatek. Pliki aktywnych zadań i niedostarczonych odpowiedzi pozostają do wyjaśnienia.").font(.caption)
                     Button("Zapisz retencję") { save() }
                 } }
                 Section { DisclosureGroup("Rozwiązywanie problemów") {

@@ -6,6 +6,7 @@ public struct TaskRecord: Identifiable, Equatable, Sendable {
     public let runID, error: String?
     public let output, deliveryState: String?
     public let created: Double
+    public var attachments: [Attachment] = []
 }
 public struct OutboxItem: Identifiable, Sendable {
     public let id, eventID, kind, destination, body, state: String
@@ -21,8 +22,10 @@ public struct ApprovalRecord: Identifiable, Sendable {
 
 public actor Database {
     private let db: OpaquePointer
+    private let exportsDirectory: URL
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-    public init(url: URL?) throws {
+    public init(url: URL?, exportsDirectory: URL = Attachment.root.appendingPathComponent("outgoing")) throws {
+        self.exportsDirectory=exportsDirectory
         if let url {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             if !FileManager.default.fileExists(atPath: url.path) {
@@ -59,6 +62,7 @@ public actor Database {
           next_attempt_at REAL NOT NULL DEFAULT 0, telegram_message_id TEXT, UNIQUE(event_id,kind));
         CREATE INDEX IF NOT EXISTS tasks_state ON tasks(state);
         CREATE INDEX IF NOT EXISTS outbox_state ON outbox(state);
+        CREATE TABLE IF NOT EXISTS task_attachments(event_id TEXT PRIMARY KEY REFERENCES inbound_events(id) ON DELETE CASCADE,json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS command_receipts(id TEXT PRIMARY KEY,created_at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS telegram_cursor(bot TEXT PRIMARY KEY,update_id INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS approvals(
@@ -179,8 +183,33 @@ public actor Database {
     public func accept(source: String, sourceID: String, text: String, recorded: Double, digest: String, isTest: Bool = false) throws -> Accepted {
         try transaction { try acceptInside(source:source,sourceID:sourceID,text:text,recorded:recorded,digest:digest,isTest:isTest) }
     }
-    public func ingestMatrix(id:String,text:String,recorded:Double) throws -> Accepted {
-        try accept(source:"matrix",sourceID:id,text:text,recorded:recorded,digest:PebbleAuthentication.digest(Data(text.utf8)))
+    public func ingestMatrix(id:String,text:String,recorded:Double,attachments:[Attachment] = []) throws -> Accepted {
+        let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+        let encoded=try encoder.encode(attachments)
+        return try transaction {
+            let digest=attachments.isEmpty ? Data(text.utf8) : Data(text.utf8)+encoded
+            let accepted=try acceptInside(source:"matrix",sourceID:id,text:text,recorded:recorded,digest:PebbleAuthentication.digest(digest),isTest:false)
+            if !attachments.isEmpty { _ = try query("INSERT OR IGNORE INTO task_attachments VALUES(?,?)",[accepted.id,String(decoding:encoded,as:UTF8.self)]) }
+            return accepted
+        }
+    }
+    public func matrixFeedback() throws -> [(id:String,state:String)] {
+        let since=try value("matrix-feedback-since")
+        if since == nil { try setValue("matrix-feedback-since",String(Date().timeIntervalSince1970));return [] }
+        return try query("SELECT e.stable_source_id,t.state FROM tasks t JOIN inbound_events e ON t.event_id=e.id WHERE e.source='matrix' AND e.received_at>=? ORDER BY e.received_at",[since]).compactMap { row in
+            guard let id=row["stable_source_id"],let state=row["state"],try value("matrix-feedback:"+id) != state else { return nil }
+            return (id,state)
+        }
+    }
+    public func retainedAttachmentPaths() throws -> Set<String> {
+        var paths=Set<String>()
+        for row in try query("SELECT json FROM task_attachments") {
+            if let json=row["json"],let files=try? JSONDecoder().decode([Attachment].self,from:Data(json.utf8)) { paths.formUnion(files.map(\.path)) }
+        }
+        for row in try query("SELECT markup FROM outbox WHERE state!='delivered' AND kind LIKE '%:attachment:%'") {
+            if let json=row["markup"],let file=try? JSONDecoder().decode(Attachment.self,from:Data(json.utf8)) { paths.insert(file.path) }
+        }
+        return paths
     }
     public func bindMatrix(room:String,user:String,bot:String) throws {
         try transaction {
@@ -201,7 +230,7 @@ public actor Database {
     private func taskRecords(_ suffix:String, _ values:[String?] = []) throws -> [TaskRecord] {
         try query("SELECT t.*,e.source,e.transcript,e.received_at FROM tasks t JOIN inbound_events e ON e.id=t.event_id " + suffix,values).map { row in
             let deliveries = try query("SELECT body,state FROM outbox WHERE event_id=? AND (kind LIKE 'result:%' OR kind LIKE 'shared-answer:%') ORDER BY rowid",[row["delivery_event"] ?? row["event_id"]])
-            return TaskRecord(id:row["event_id"]!,source:row["source"]!,text:row["transcript"]!,session:row["hermes_session_id"]!,state:row["state"]!,runID:row["hermes_run_id"],error:row["terminal_error_code"],output:row["output"] ?? (deliveries.isEmpty ? nil : deliveries.compactMap{$0["body"]}.joined(separator:"\n")),deliveryState:deliveries.first(where:{$0["state"] != "delivered"})?["state"] ?? deliveries.first?["state"],created:Double(row["received_at"]!)!)
+            return TaskRecord(id:row["event_id"]!,source:row["source"]!,text:row["transcript"]!,session:row["hermes_session_id"]!,state:row["state"]!,runID:row["hermes_run_id"],error:row["terminal_error_code"],output:row["output"] ?? (deliveries.isEmpty ? nil : deliveries.compactMap{$0["body"]}.joined(separator:"\n")),deliveryState:deliveries.first(where:{$0["state"] != "delivered"})?["state"] ?? deliveries.first?["state"],created:Double(row["received_at"]!)!,attachments:try query("SELECT json FROM task_attachments WHERE event_id=?",[row["event_id"]]).first?["json"].map { try JSONDecoder().decode([Attachment].self,from:Data($0.utf8)) } ?? [])
         }
     }
     public func tasks() throws -> [TaskRecord] {
@@ -239,10 +268,15 @@ public actor Database {
         }
     }
     public func enqueue(event: String = UUID().uuidString, kind: String = "notice", destination: String, body: String, markup: String? = nil) throws {
-        let parts = MessageParts.split(body)
+        let (text,files) = ["result","shared-answer"].contains(kind) ? Attachment.exports(in:body,directory:exportsDirectory) : (body,[])
+        let parts = text.isEmpty && !files.isEmpty ? [] : MessageParts.split(text)
         for (i, part) in parts.enumerated() {
             let text = parts.count > 1 ? "[\(i+1)/\(parts.count)] \(part)" : part
             _ = try query("INSERT OR IGNORE INTO outbox(id,event_id,kind,destination,body,markup,created_at) VALUES(?,?,?,?,?,?,?)",[UUID().uuidString,event,"\(kind):\(i)",destination,text,i == parts.count-1 ? markup : nil,String(Date().timeIntervalSince1970)])
+        }
+        for (i,file) in files.enumerated() {
+            let metadata=String(decoding:try JSONEncoder().encode(file),as:UTF8.self)
+            _ = try query("INSERT OR IGNORE INTO outbox(id,event_id,kind,destination,body,markup,created_at) VALUES(?,?,?,?,?,?,?)",[UUID().uuidString,event,"\(kind):attachment:\(i)",destination,file.name,metadata,String(Date().timeIntervalSince1970)])
         }
     }
     private func deliveryRecords(_ suffix:String) throws -> [OutboxItem] {
@@ -284,12 +318,14 @@ public actor Database {
         try transaction {
             let terminal = "SELECT event_id FROM tasks WHERE state IN ('completed','failed','cancelled','interrupted') AND updated_at < ? AND NOT EXISTS(SELECT 1 FROM outbox o WHERE o.event_id=COALESCE(tasks.delivery_event,tasks.event_id) AND o.state!='delivered')"
             _ = try query("UPDATE inbound_events SET transcript='' WHERE id IN (\(terminal))",[String(now-Double(contentDays)*86400)])
+            _ = try query("DELETE FROM task_attachments WHERE event_id IN (\(terminal))",[String(now-Double(contentDays)*86400)])
             _ = try query("UPDATE tasks SET submit_json=NULL,output=NULL WHERE event_id IN (\(terminal))",[String(now-Double(contentDays)*86400)])
             _ = try query("UPDATE outbox SET body='',markup=NULL WHERE state='delivered' AND event_id IN (\(terminal))",[String(now-Double(contentDays)*86400)])
             _ = try query("UPDATE outbox SET body='',markup=NULL WHERE state='delivered' AND created_at < ?",[String(now-Double(contentDays)*86400)])
             _ = try query("UPDATE approvals SET description='' WHERE state NOT IN ('pending','resolving','unknown') AND expiration < ?",[String(now-Double(contentDays)*86400)])
             _ = try query("DELETE FROM outbox WHERE state='delivered' AND created_at < ?",[String(now-Double(metadataDays)*86400)])
             _ = try query("DELETE FROM meta WHERE key IN (SELECT 'matrix-command:'||id FROM command_receipts WHERE created_at < ?)",[String(now-Double(metadataDays)*86400)])
+            _ = try query("DELETE FROM meta WHERE key IN (SELECT 'matrix-feedback:'||stable_source_id FROM inbound_events WHERE source='matrix' AND received_at < ?)",[String(now-Double(metadataDays)*86400)])
             _ = try query("DELETE FROM command_receipts WHERE created_at < ?",[String(now-Double(metadataDays)*86400)])
             _ = try query("UPDATE inbound_events SET transcript='' WHERE status='test' AND received_at < ?",[String(now-Double(contentDays)*86400)])
             // Keep source IDs/digests as dedupe tombstones for the configured metadata window.

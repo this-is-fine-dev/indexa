@@ -37,7 +37,7 @@ async def create_proxy():
         except (TimeoutError, OSError):
             raise web.HTTPBadGateway()
 
-    app = web.Application(client_max_size=6 * 1024 * 1024)
+    app = web.Application(client_max_size=21 * 1024 * 1024)
     app.router.add_route("*", "/{path:.*}", proxy)
     async def cleanup(_):
         await session.close()

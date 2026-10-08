@@ -36,28 +36,36 @@ extension HermesClient {
         }
     }
 
-    func conversationMessages(_ session: String, offset: Int = 0) async throws -> [[String: Any]] {
+    func conversationMessages(_ session: String, offset: Int = 0) async throws -> (messages:[[String: Any]],limit:Int) {
         guard Self.validSessionID(session) else { throw IndexaError("invalid_hermes_session") }
-        var url = URLComponents(url: baseURL.appendingPathComponent("api/sessions/\(session)/messages"), resolvingAgainstBaseURL: false)!
-        url.queryItems = [URLQueryItem(name: "limit", value: "200"), URLQueryItem(name: "offset", value: String(offset)),
-                         URLQueryItem(name: "order", value: "latest"), URLQueryItem(name: "include_compacted", value: "1")]
-        let result = try await http.request(url.url!, headers: ["Authorization": "Bearer \(key)"])
-        guard let messages = result["data"] as? [[String: Any]] else { throw IndexaError("invalid_hermes_messages") }
-        return messages
+        var limit=20
+        while true {
+            var url = URLComponents(url: baseURL.appendingPathComponent("api/sessions/\(session)/messages"), resolvingAgainstBaseURL: false)!
+            url.queryItems = [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "offset", value: String(offset)),
+                             URLQueryItem(name: "order", value: "latest"), URLQueryItem(name: "include_compacted", value: "1")]
+            do {
+                // One 5 MiB image fits; reduce page size when several images exceed the budget.
+                let result = try await http.request(url.url!, headers: ["Authorization": "Bearer \(key)"],maxBytes:8*1024*1024)
+                guard let messages = result["data"] as? [[String: Any]] else { throw IndexaError("invalid_hermes_messages") }
+                return (messages,limit)
+            } catch let error as APIError where error.code == -3 && limit > 1 { limit=max(1,limit/2) }
+        }
     }
 
     public func finalAnswerID(session: String, output: String, createdAt: Double?, completedAt: Double?) async throws -> String? {
         guard let createdAt, let completedAt else { throw IndexaError("run_delivery_timestamps_missing") }
         // Bind delivery to a persisted message within this run, never an old equal-text outbox item.
-        for page in 0..<20 {
-            let messages = try await conversationMessages(session, offset: page * 200)
+        var offset=0
+        while offset < 4000 {
+            let page = try await conversationMessages(session, offset: offset)
+            let messages=page.messages;offset += messages.count
             for message in messages.reversed() {
                 guard let time = (message["timestamp"] as? NSNumber)?.doubleValue,
                       time >= createdAt, time <= completedAt,
                       let answer = try Self.visibleAnswer(message), answer.text == output else { continue }
                 return "hermes-message:" + answer.id
             }
-            if messages.count < 200 { return nil }
+            if messages.count < page.limit { return nil }
             if messages.allSatisfy({ (($0["timestamp"] as? NSNumber)?.doubleValue ?? completedAt) < createdAt }) { return nil }
         }
         throw IndexaError("shared_chat_history_gap")
@@ -91,12 +99,14 @@ public actor SharedConversation {
         var answers = [(id: String, text: String)]()
         var reachedCursor = false
         // ponytail: cap recovery at 4,000 messages; larger gaps stop visibly instead of dropping history.
-        for page in 0..<20 {
-            let messages = try await hermes.conversationMessages(session, offset: page * 200)
+        var offset=0
+        while offset < 4000 {
+            let page = try await hermes.conversationMessages(session, offset: offset)
+            let messages=page.messages;offset += messages.count
             let finals = try messages.compactMap(HermesClient.visibleAnswer)
             if previous == nil {
                 if let last = finals.last { try await db.setValue(cursorKey, last.id); return }
-                if messages.count < 200 { try await db.setValue(cursorKey, ""); return }
+                if messages.count < page.limit { try await db.setValue(cursorKey, ""); return }
                 continue
             }
             if let index = finals.lastIndex(where: { $0.id == previous }) {
@@ -105,7 +115,7 @@ public actor SharedConversation {
                 break
             }
             answers = finals + answers
-            if messages.count < 200 { reachedCursor = previous == ""; break }
+            if messages.count < page.limit { reachedCursor = previous == ""; break }
         }
         guard previous != nil, reachedCursor else { throw IndexaError("shared_chat_history_gap") }
         for answer in answers {

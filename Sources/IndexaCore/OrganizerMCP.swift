@@ -28,7 +28,10 @@ public struct OrganizerMCP: MCPModule {
         var tools = [tool("lists", "List all existing \(kind == .calendar ? "calendars" : "reminder lists"), including their IDs and whether they allow writes.", [:], [], "read")]
         if kind == .calendar {
             tools += [
-                tool("events", "Read existing events across ALL calendars by default, including holidays and time off. Required date range, max 366 days; at most 200 matches. Optional calendar_id narrows to one calendar. query filters titles; truncated=true requires a narrower range/query.", ["start": date, "end": date, "calendar_id": text, "query": text], ["start", "end"], "read"),
+                tool("events", "Read existing events across ALL calendars by default. Required date range, max 366 days. Compact pages: limit defaults to 20 (max 50); follow next_offset until null before concluding an event is absent. Optional query searches title, location AND notes; use no query for broader discovery. Notes are omitted unless include_notes=true. occurrence_id distinguishes repeats of the same event. Response includes the Mac's current date/time and timezone. Optional calendar_id narrows to one calendar.", ["start": date, "end": date, "calendar_id": text, "query": text,
+                    "limit": .object(["type": .string("integer"), "minimum": .number(1), "maximum": .number(50), "default": .number(20)]),
+                    "offset": .object(["type": .string("integer"), "minimum": .number(0), "maximum": .number(1000000), "default": .number(0)]),
+                    "include_notes": .object(["type": .string("boolean"), "default": .bool(false)])], ["start", "end"], "read"),
                 tool("create", "Create a timed event in an existing writable calendar; omit calendar_id to use the system default. No invitations, deletion or recurrence." + writeHelp, ["title": text, "start": date, "end": date, "calendar_id": text, "operation_id": text, "notes": text, "location": text, "alert_minutes": .object(["type": .string("integer"), "minimum": .number(0), "maximum": .number(10080)])], ["title", "start", "end", "operation_id"], "create")
             ]
         } else {
@@ -77,7 +80,7 @@ public struct OrganizerMCP: MCPModule {
         let allowed: Set<String>, required: Set<String>
         switch (kind, tool) {
         case (_, kind.rawValue + "_lists"): allowed = []; required = []
-        case (.calendar, "calendar_events"): allowed = ["start", "end", "calendar_id", "query"]; required = ["start", "end"]
+        case (.calendar, "calendar_events"): allowed = ["start", "end", "calendar_id", "query", "limit", "offset", "include_notes"]; required = ["start", "end"]
         case (.calendar, "calendar_create"): allowed = ["title", "start", "end", "calendar_id", "operation_id", "notes", "location", "alert_minutes"]; required = ["title", "start", "end", "operation_id"]
         case (.reminders, "reminders_list"): allowed = ["calendar_id", "query", "include_completed"]; required = []
         case (.reminders, "reminders_create"): allowed = ["title", "notes", "due", "calendar_id", "operation_id"]; required = ["title", "operation_id"]
@@ -86,7 +89,12 @@ public struct OrganizerMCP: MCPModule {
         }
         guard Set(args.keys).isSubset(of: allowed), required.isSubset(of: Set(args.keys)) else { try invalid() }
         for (key, value) in args {
-            if key == "include_completed" { guard case .bool = value else { try invalid() }; continue }
+            if key == "include_completed" || key == "include_notes" { guard case .bool = value else { try invalid() }; continue }
+            if key == "limit" || key == "offset" {
+                let bounds: ClosedRange<Double> = key == "limit" ? 1...50 : 0...1000000
+                guard case .number(let number) = value, number.isFinite, number.rounded() == number, bounds.contains(number) else { try invalid() }
+                continue
+            }
             if key == "alert_minutes" { guard case .number(let number) = value, number.isFinite, number.rounded() == number, (0...10080).contains(number) else { try invalid() }; continue }
             guard let text = value.stringValue, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 2000 else { try invalid() }
             if key == "operation_id", UUID(uuidString: text) == nil { try invalid() }
@@ -132,8 +140,7 @@ public struct OrganizerMCP: MCPModule {
         }
         if tool == "calendar_events" {
             let predicate = events.predicateForEvents(withStart: OrganizerMCP.date(args["start"]!.stringValue!)!, end: OrganizerMCP.date(args["end"]!.stringValue!)!, calendars: selected)
-            let matching = events.events(matching: predicate).filter { matches($0.title, query: args["query"]?.stringValue) }.sorted { $0.startDate < $1.startDate }
-            return try result(.object(["events": .array(matching.prefix(200).map(eventValue)), "truncated": .bool(matching.count > 200), "timezone": .string(TimeZone.current.identifier)]))
+            return try result(Self.calendarPage(events.events(matching: predicate), arguments: args))
         }
         if tool == "reminders_list" {
             let predicate = events.predicateForReminders(in: selected)
@@ -205,8 +212,38 @@ public struct OrganizerMCP: MCPModule {
         } catch { throw IndexaError("organizer_write_uncertain") }
     }
     private func matches(_ title: String?, query: String?) -> Bool { query.map { (title ?? "").localizedStandardContains($0) } ?? true }
-    private func eventValue(_ event: EKEvent) -> MCPValue {
-        .object(["id": .string(event.calendarItemIdentifier), "title": .string(event.title ?? ""), "calendar": .string(event.calendar.title), "calendar_id": .string(event.calendar.calendarIdentifier), "start": .string(event.startDate.ISO8601Format()), "end": .string(event.endDate.ISO8601Format()), "all_day": .bool(event.isAllDay), "location": .string(event.location ?? ""), "notes": .string(String((event.notes ?? "").prefix(2000))), "notes_truncated": .bool((event.notes?.count ?? 0) > 2000)])
+    static func calendarPage(_ events: [EKEvent], arguments: MCPValue, now: Date = Date(), timezone: TimeZone = .current) -> MCPValue {
+        let matching = events.filter { event in
+            arguments["query"]?.stringValue.map { query in
+                [event.title, event.location, event.notes].contains { ($0 ?? "").localizedStandardContains(query) }
+            } ?? true
+        }.sorted {
+            if $0.startDate != $1.startDate { return $0.startDate < $1.startDate }
+            return $0.calendarItemIdentifier < $1.calendarItemIdentifier
+        }
+        let limit: Int = if case .number(let value) = arguments["limit"] { Int(value) } else { 20 }
+        let offset: Int = if case .number(let value) = arguments["offset"] { Int(value) } else { 0 }
+        let formatter = ISO8601DateFormatter(); formatter.timeZone = timezone
+        let page = matching.dropFirst(offset).prefix(limit).map { event -> MCPValue in
+            let start = formatter.string(from: event.startDate)
+            var value: [String: MCPValue] = [
+                "id": .string(event.calendarItemIdentifier), "occurrence_id": .string(event.calendarItemIdentifier + "@" + start),
+                "title": .string(String((event.title ?? "").prefix(500))), "calendar": .string(String(event.calendar.title.prefix(200))),
+                "calendar_id": .string(event.calendar.calendarIdentifier), "start": .string(start),
+                "end": .string(formatter.string(from: event.endDate)), "all_day": .bool(event.isAllDay),
+                "location": .string(String((event.location ?? "").prefix(300)))
+            ]
+            if arguments["include_notes"] == .bool(true) {
+                value["notes"] = .string(String((event.notes ?? "").prefix(2000)))
+                value["notes_truncated"] = .bool((event.notes?.count ?? 0) > 2000)
+            }
+            return .object(value)
+        }
+        let next = offset + page.count
+        let timestamp = formatter.string(from: now)
+        return .object(["events": .array(page), "total": .number(Double(matching.count)), "offset": .number(Double(offset)),
+                        "next_offset": next < matching.count ? .number(Double(next)) : .null, "truncated": .bool(next < matching.count),
+                        "timezone": .string(timezone.identifier), "now": .string(timestamp), "local_date": .string(String(timestamp.prefix(10)))])
     }
     private func reminderValue(_ reminder: EKReminder) -> MCPValue {
         .object(["id": .string(reminder.calendarItemIdentifier), "title": .string(reminder.title ?? ""), "list": .string(reminder.calendar.title), "calendar_id": .string(reminder.calendar.calendarIdentifier), "completed": .bool(reminder.isCompleted), "due": dueDate(reminder).map { .string($0.ISO8601Format()) } ?? .null, "due_has_time": .bool(reminder.dueDateComponents?.hour != nil), "notes": .string(String((reminder.notes ?? "").prefix(2000))), "notes_truncated": .bool((reminder.notes?.count ?? 0) > 2000)])

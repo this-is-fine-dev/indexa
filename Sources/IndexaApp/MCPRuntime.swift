@@ -17,8 +17,14 @@ extension Runtime {
             guard let db else { throw IndexaError("mcp_database_unavailable") }
             let organizer = OrganizerStore(database: db)
             organizerStore = organizer
-            let manager = try MCPManager(token: token, modules: [notes, OrganizerMCP(kind: .reminders, store: organizer), OrganizerMCP(kind: .calendar, store: organizer)],
+            let manager = try MCPManager(token: token, modules: [notes, FilesMCP(), OrganizerMCP(kind: .reminders, store: organizer), OrganizerMCP(kind: .calendar, store: organizer)],
                 preferencesURL: Configuration.directory.appendingPathComponent("mcp-permissions.json"))
+            // User requested report attachments; this grant only creates Indexa-owned exports.
+            if try await db.value("files-mcp-initialized") == nil {
+                try await manager.setPermissions(["create"],for:"files")
+                try await manager.setEnabled(true,for:"files")
+                try await db.setValue("files-mcp-initialized","1")
+            }
             let server = try await Application.make(.init(name: "production", arguments: ["Indexa MCP"]))
             await manager.install(on: server)
             do { try await server.http.server.shared.start(address: .hostname("127.0.0.1", port: 43121)) }
@@ -67,7 +73,7 @@ extension Runtime {
     }
 
     func organizerScopeDescription(_ module: String) -> String {
-        module == "calendar" ? "Odczyt obejmuje wszystkie istniejące kalendarze, również tylko do odczytu. Tworzenie wydarzeń ma osobne uprawnienie. Bez usuwania i wysyłania zaproszeń." : "Dostęp do istniejących list i przypomnień. Odczyt, tworzenie i oznaczanie jako wykonane mają osobne uprawnienia. Bez usuwania."
+        module == "files" ? "Tworzy raporty TXT, MD, CSV, JSON i PDF wyłącznie w katalogu eksportów Indexy. Bez odczytu innych plików na Macu. Wskazany raport może zostać dołączony do odpowiedzi w prywatnym Matrixie." : module == "calendar" ? "Odczyt obejmuje wszystkie istniejące kalendarze, również tylko do odczytu. Tworzenie wydarzeń ma osobne uprawnienie. Bez usuwania i wysyłania zaproszeń." : "Dostęp do istniejących list i przypomnień. Odczyt, tworzenie i oznaczanie jako wykonane mają osobne uprawnienia. Bez usuwania."
     }
 
     func requestOrganizerAccess(_ module: String) async {
@@ -83,13 +89,13 @@ extension Runtime {
     }
 
     func setMCPEnabled(_ enabled: Bool, module: String) async {
-        do { try await mcpManager?.setEnabled(enabled, for: module); await refreshMCP() }
+        do { try await mcpManager?.setEnabled(enabled, for: module); await refreshMCP(); await connectMCPToHermes() }
         catch { mcpNotice = "Nie zapisano zmiany: \(Self.message(error))" }
     }
 
     func setMCPPermission(_ permission: String, enabled: Bool, module: String) async {
         guard let manager = mcpManager else { return }
-        do { try await manager.setPermission(permission, enabled: enabled, for: module); await refreshMCP() }
+        do { try await manager.setPermission(permission, enabled: enabled, for: module); await refreshMCP(); await connectMCPToHermes() }
         catch { mcpNotice = "Nie zapisano zmiany: \(Self.message(error))" }
     }
 

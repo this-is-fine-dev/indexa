@@ -35,6 +35,7 @@ jobs:
           python3 -B Tests/test_hermes_mcp.py
           python3 -B Tests/test_runtime_update.py
           python3 -B Tests/test_matrix_journal.py
+          python3 -B Tests/test_matrix_media.py
           python3 -B Tests/test_matrix_qr_boundaries.py
           python3 -B Tests/test_bot_identity.py
           python3 -B Tests/test_matrix_crypto.py

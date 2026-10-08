@@ -14,7 +14,7 @@ test -d "$framework"
 app='dist/Indexa.app'
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/matrix" "$app/Contents/Resources/hermes-plugin" "$app/Contents/Frameworks"
-cp matrix/service.py matrix/qr_session.py matrix/native_services.py matrix/public_proxy.py "$app/Contents/Resources/matrix/"
+cp matrix/service.py matrix/media.py matrix/qr_session.py matrix/native_services.py matrix/public_proxy.py "$app/Contents/Resources/matrix/"
 cp matrix/qr/target/release/indexa-qr "$app/Contents/Resources/matrix/"
 cp hermes-plugin/__init__.py hermes-plugin/mcp_notes.py hermes-plugin/notes.js hermes-plugin/plugin.yaml "$app/Contents/Resources/hermes-plugin/"
 cp release/stack.json scripts/prepare-runtime.py scripts/connect-hermes-mcp.py "$app/Contents/Resources/"

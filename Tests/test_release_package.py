@@ -18,6 +18,7 @@ with zipfile.ZipFile(archive) as zipped:
     assert key == base64.b64decode(Path('release/sparkle-public-key.txt').read_bytes(), validate=True)
     names = set(zipped.namelist())
     for required in ('MacOS/Indexa', 'Resources/matrix/indexa-qr', 'Resources/matrix/service.py',
+                     'Resources/matrix/media.py', 'Resources/connect-hermes-mcp.py',
                      'Resources/stack.json', 'Resources/prepare-runtime.py', 'Resources/hermes-plugin/__init__.py',
                      'Frameworks/Sparkle.framework/Versions/B/Sparkle'):
         assert prefix + required in names, required
