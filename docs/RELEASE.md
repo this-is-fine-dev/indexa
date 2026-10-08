@@ -52,4 +52,6 @@ Publiczny certyfikat jest w `release/code-signing.cer`. Prywatny klucz jest w ig
 
 `python3 Tests/test_signing.py` sprawdza dwie różne kompilacje, zgodność ich wymagań w obu kierunkach i odrzucanie podpisu obcego oraz zmodyfikowanych zasobów. Sprawdzenie podpisu nie zastępuje testu TCC na urządzeniu: po jednorazowej zgodzie dla nowej tożsamości należy sprawdzić odczyt po kolejnej aktualizacji. Stare zgody przypięte do ad hoc nie mogą być przeniesione tym mechanizmem.
 
+2026-10-08 potwierdzono zachowanie zgód na tym Macu podczas aktualizacji 0.5.3 → 0.5.4 przez `scripts/install-app.py`: `calendar_lists` i `reminders_lists` działały przed wymianą aplikacji oraz po automatycznym restarcie, bez ponownego żądania zgody. Test dotyczył instalacji lokalnej; osobny przebieg aktualizacji z okna Sparkle nie był częścią tego sprawdzenia.
+
 Klucz Sparkle Ed25519 pozostaje ten sam. Jego podpis autoryzuje przejście z wydania ad hoc na nowy certyfikat. Nie zmieniaj obu kluczy naraz. Własny certyfikat nie daje zaufania Developer ID ani notarizacji na nowym Macu.
