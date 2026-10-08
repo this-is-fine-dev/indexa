@@ -256,17 +256,20 @@ async def main():
     transport = Transport(config, directory, credentials)
     qr = QRSession(ROOT, config, {key:value for key,value in credentials.items() if key in {"matrix-owner-token", "matrix-owner-pickle"}}, transport)
     credentials.clear()
-    # QR services use bounded stream collectors below; legacy server has no active install.
-    log = (directory / "server.log").open("ab")
+    from logging.handlers import RotatingFileHandler
+    from native_services import NativeServices
+    log = None
+    log_task = None
     services = None
     if config.get("qr_enabled"):
-        from native_services import NativeServices
         services = NativeServices(ROOT)
         await services.start()
         servers = services.children
     else:
+        log = RotatingFileHandler(directory / "server.log", maxBytes=2*1024*1024, backupCount=2, encoding="utf-8")
         servers = [await asyncio.create_subprocess_exec(sys.executable, "-m", "synapse.app.homeserver",
-            "-c", str(directory / "homeserver.yaml"), stdout=log, stderr=log)]
+            "-c", str(directory / "homeserver.yaml"), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)]
+        log_task = asyncio.create_task(NativeServices.collect_log(servers[0].stdout, log))
     stop = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
@@ -305,7 +308,10 @@ async def main():
                     except asyncio.TimeoutError:
                         server.kill()
                         await server.wait()
-        log.close()
+        if log_task:
+            await log_task
+        if log:
+            log.close()
 
 
 if __name__ == "__main__":

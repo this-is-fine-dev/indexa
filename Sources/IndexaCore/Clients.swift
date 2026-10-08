@@ -50,6 +50,8 @@ public struct RunStatus {
     public let output:String?
     public let approvalID:String?
     public let approvalDescription:String?
+    public var createdAt:Double? = nil
+    public var completedAt:Double? = nil
 }
 public struct HermesClient {
     public let baseURL:URL
@@ -80,7 +82,7 @@ public struct HermesClient {
         let result=try await http.request(baseURL.appendingPathComponent("v1/runs/\(run)"),headers:["Authorization":"Bearer \(key)"])
         guard let state=result["status"] as? String, ["queued","started","running","waiting_for_approval","stopping","completed","failed","cancelled","interrupted"].contains(state) else { throw IndexaError("unknown_run_state") }
         let approval=result["approval"] as? [String:Any]
-        return RunStatus(state:state,output:result["output"] as? String,approvalID:approval?["request_id"] as? String,approvalDescription:approval?["description"] as? String)
+        return RunStatus(state:state,output:result["output"] as? String,approvalID:approval?["request_id"] as? String,approvalDescription:approval?["description"] as? String,createdAt:(result["created_at"] as? NSNumber)?.doubleValue,completedAt:(result["updated_at"] as? NSNumber)?.doubleValue)
     }
     public func stop(_ run:String) async throws {
         guard Self.validID(run) else { throw IndexaError("invalid_run_id") }

@@ -150,3 +150,21 @@ async def limited_sync_keeps_cursor_and_loop_alive_check():
             await transport.client.close()
 asyncio.run(limited_sync_keeps_cursor_and_loop_alive_check())
 print('PASS: timeline gap keeps durable cursor and does not kill sync loop')
+
+async def bounded_native_logs_check():
+    import sys
+    from logging.handlers import RotatingFileHandler
+    sys.path.insert(0, str(Path(__file__).parents[1] / 'matrix'))
+    from native_services import NativeServices
+    with tempfile.TemporaryDirectory() as directory:
+        stream = asyncio.StreamReader()
+        stream.feed_data(b'x' * 12000)
+        stream.feed_eof()
+        handler = RotatingFileHandler(Path(directory) / 'service.log', maxBytes=10000, backupCount=2)
+        await NativeServices.collect_log(stream, handler)
+        handler.close()
+        files = list(Path(directory).glob('service.log*'))
+        assert len(files) <= 3 and all(path.stat().st_size <= 10000 for path in files)
+        assert sum(path.stat().st_size for path in files) >= 12000
+asyncio.run(bounded_native_logs_check())
+print('PASS: bounded native subprocess log collection')

@@ -86,6 +86,7 @@ struct Dashboard:View {
                     }
                 }
                 Section("Zadania") {
+                    if runtime.tasks.count >= 200 { Text("Pokazujemy do 200 zadań, najpierw aktywne. Starsza rozmowa jest w Hermesie.").font(.caption).foregroundStyle(.secondary) }
                     if runtime.tasks.isEmpty { Text("Tu pojawią się polecenia z Pebble i Matrix.").foregroundStyle(.secondary) }
                     ForEach(runtime.tasks.prefix(200)) { task in
                         HStack {
@@ -97,6 +98,7 @@ struct Dashboard:View {
                     }
                 }
                 Section("Dostarczenie do Matrix") {
+                    if runtime.outbox.filter({$0.state != "delivered"}).count > 30 { Text("Pokazujemy pierwsze 30 oczekujących wiadomości z bieżącego podglądu kolejki.").font(.caption).foregroundStyle(.secondary) }
                     ForEach(runtime.outbox.filter{$0.state != "delivered"}.prefix(30)) { item in
                         HStack { Text(String(item.eventID.prefix(8)));Spacer();Text(Runtime.stateLabel(item.state))
                             if ["failed","delivery_unknown"].contains(item.state) { Button("Ponów wiadomość…") { delivery=item } }
@@ -124,7 +126,11 @@ struct Dashboard:View {
                         }
                     }.frame(maxWidth:.infinity,alignment:.leading).textSelection(.enabled)
                 }
-                Button("Zamknij") { selected=nil }.keyboardShortcut(.cancelAction)
+                HStack {
+                    Button("Otwórz Hermes") { runtime.openHermes() }
+                    Text("BOTS → Indexa").font(.caption).foregroundStyle(.secondary)
+                    Spacer();Button("Zamknij") { selected=nil }.keyboardShortcut(.cancelAction)
+                }
             }.padding(24).frame(width:620,height:480)
         }
         .sheet(isPresented:$diagnostics) {
@@ -252,6 +258,7 @@ struct SettingsView:View {
                     Button("Połącz ponownie Hermes i Matrix…") { confirmReconnect=true }.disabled(runtime.restarting)
                 }
                 Section("Hermes · profil indexa") {
+                    Button("Otwórz Hermes") { runtime.openHermes() }
                     Text("Model i serwery MCP konfigurujesz poniższymi poleceniami w Terminalu. Zmiany dotyczą profilu indexa.").font(.caption)
                     copyButton("Kopiuj polecenie: model",enabled:true) { "~/.local/bin/hermes -p indexa model" }
                     copyButton("Kopiuj polecenie: MCP",enabled:true) { "~/.local/bin/hermes -p indexa mcp" }

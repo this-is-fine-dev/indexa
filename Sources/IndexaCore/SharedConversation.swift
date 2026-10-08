@@ -35,4 +35,82 @@ extension HermesClient {
             (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
         }
     }
+
+    func conversationMessages(_ session: String, offset: Int = 0) async throws -> [[String: Any]] {
+        guard Self.validSessionID(session) else { throw IndexaError("invalid_hermes_session") }
+        var url = URLComponents(url: baseURL.appendingPathComponent("api/sessions/\(session)/messages"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "limit", value: "200"), URLQueryItem(name: "offset", value: String(offset)),
+                         URLQueryItem(name: "order", value: "latest"), URLQueryItem(name: "include_compacted", value: "1")]
+        let result = try await http.request(url.url!, headers: ["Authorization": "Bearer \(key)"])
+        guard let messages = result["data"] as? [[String: Any]] else { throw IndexaError("invalid_hermes_messages") }
+        return messages
+    }
+
+    public func finalAnswerID(session: String, output: String, createdAt: Double?, completedAt: Double?) async throws -> String? {
+        guard let createdAt, let completedAt else { throw IndexaError("run_delivery_timestamps_missing") }
+        // Bind delivery to a persisted message within this run, never an old equal-text outbox item.
+        for page in 0..<20 {
+            let messages = try await conversationMessages(session, offset: page * 200)
+            for message in messages.reversed() {
+                guard let time = (message["timestamp"] as? NSNumber)?.doubleValue,
+                      time >= createdAt, time <= completedAt,
+                      let answer = try Self.visibleAnswer(message), answer.text == output else { continue }
+                return "hermes-message:" + answer.id
+            }
+            if messages.count < 200 { return nil }
+            if messages.allSatisfy({ (($0["timestamp"] as? NSNumber)?.doubleValue ?? completedAt) < createdAt }) { return nil }
+        }
+        throw IndexaError("shared_chat_history_gap")
+    }
+
+    static func visibleAnswer(_ message: [String: Any]) throws -> (id: String, text: String)? {
+        guard message["role"] as? String == "assistant", message["finish_reason"] as? String == "stop",
+              (message["tool_calls"] as? [Any])?.isEmpty != false,
+              let text = message["content"] as? String, !text.isEmpty else { return nil }
+        guard let timestamp = message["timestamp"] as? NSNumber else { throw IndexaError("invalid_hermes_message_identity") }
+        // Hermes preserves logical timestamps while copying rows during compression.
+        let identity = try JSONSerialization.data(withJSONObject: ["time": timestamp, "content": text], options: .sortedKeys)
+        return (PebbleAuthentication.digest(identity), text)
+    }
+}
+
+/// One delivery path for final answers, whether a turn started on the Mac, Matrix or Pebble.
+public actor SharedConversation {
+    private let db: Database
+    private let hermes: HermesClient
+    private var busy = false
+    public init(database: Database, hermes: HermesClient) { db = database; self.hermes = hermes }
+
+    public func tick(destination: String) async throws {
+        guard !busy, !destination.isEmpty else { return }
+        busy = true; defer { busy = false }
+        let session = try await hermes.canonicalConversation()
+        try await db.bindConversation(session)
+        let cursorKey = "shared-answer-cursor"
+        let previous = try await db.value(cursorKey)
+        var answers = [(id: String, text: String)]()
+        var reachedCursor = false
+        // ponytail: cap recovery at 4,000 messages; larger gaps stop visibly instead of dropping history.
+        for page in 0..<20 {
+            let messages = try await hermes.conversationMessages(session, offset: page * 200)
+            let finals = try messages.compactMap(HermesClient.visibleAnswer)
+            if previous == nil {
+                if let last = finals.last { try await db.setValue(cursorKey, last.id); return }
+                if messages.count < 200 { try await db.setValue(cursorKey, ""); return }
+                continue
+            }
+            if let index = finals.lastIndex(where: { $0.id == previous }) {
+                answers = Array(finals.suffix(from: index + 1)) + answers
+                reachedCursor = true
+                break
+            }
+            answers = finals + answers
+            if messages.count < 200 { reachedCursor = previous == ""; break }
+        }
+        guard previous != nil, reachedCursor else { throw IndexaError("shared_chat_history_gap") }
+        for answer in answers {
+            try await db.enqueue(event: "hermes-message:" + answer.id, kind: "shared-answer", destination: destination, body: answer.text)
+        }
+        if let last = answers.last { try await db.setValue(cursorKey, last.id) }
+    }
 }

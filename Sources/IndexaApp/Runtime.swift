@@ -28,6 +28,7 @@ final class Runtime:ObservableObject {
     var db:Database?
     private var app:Application?
     private var agent:AgentWorker?
+    private var sharedConversation:SharedConversation?
     private var receiver:MatrixReceiver?
     private var matrix:MatrixClient?
     private var matrixProcess:Process?
@@ -47,6 +48,8 @@ final class Runtime:ObservableObject {
     private var matrixFailures=0
     private var hermesFailures=0
     private var starting=false
+    private var startupGeneration=UUID()
+    private var stopTask:Task<Bool,Never>?
     @Published var restarting=false
     @Published var matrixConnected=false
     @Published var hermesConnected=false
@@ -62,7 +65,10 @@ final class Runtime:ObservableObject {
 
 
     func start() async {
-        guard !starting,!ready else { return };starting=true;defer { starting=false }
+        guard !starting,!ready,stopTask == nil else { return }
+        guard lockFD < 0 else { notice="Poprzednie usługi jeszcze nie zakończyły pracy. Wybierz Połącz ponownie.";return }
+        starting=true;defer { starting=false }
+        let generation=UUID();startupGeneration=generation
         do {
             try secrets.openAutomatically()
             vaultUnlocked=true;vaultNeedsPassphrase=false
@@ -74,16 +80,25 @@ final class Runtime:ObservableObject {
             _ = try requiredSecret(.matrixPickle)
             config=try Configuration.load()
             try config.save()
-            lockFD=open(Configuration.directory.appendingPathComponent("instance.lock").path,O_CREAT|O_RDWR,0o600)
-            guard lockFD >= 0,flock(lockFD,LOCK_EX|LOCK_NB) == 0 else { throw IndexaError("indexa_already_running") }
+            let descriptor=open(Configuration.directory.appendingPathComponent("instance.lock").path,O_CREAT|O_RDWR|O_NOFOLLOW,0o600)
+            guard descriptor >= 0 else { throw IndexaError("instance_lock_unavailable") }
+            guard flock(descriptor,LOCK_EX|LOCK_NB) == 0 else { close(descriptor);throw IndexaError("indexa_already_running") }
+            lockFD=descriptor
             try await StackCompatibility.prepare()
+            guard generation == startupGeneration else { return }
             let database=try Database(url:Configuration.directory.appendingPathComponent("bridge.sqlite"));db=database
             try await database.recover()
+            guard generation == startupGeneration else { return }
             let webhookSecret=try secrets.getOrCreate(.pebbleSigning),key=try secrets.getOrCreate(.hermesAPI)
             let hermes=HermesClient(baseURL:URL(string:config.hermesURL)!,key:key)
             agent=AgentWorker(database:database,hermes:hermes)
+            sharedConversation=SharedConversation(database:database,hermes:hermes)
             await agent?.setPaused(paused)
+            guard generation == startupGeneration else { return }
             try await startIngress(secret:webhookSecret)
+            guard generation == startupGeneration else {
+                if let app { await app.http.server.shared.shutdown();try? await app.asyncShutdown();self.app=nil };return
+            }
             try launchGateway(key:key)
             try launchMatrix()
             try setupMatrix()
@@ -249,6 +264,7 @@ final class Runtime:ObservableObject {
             hermesConnected=features["run_submission"] as? Bool == true
             hermesStatus=hermesConnected ? "API gotowe" : "API nie obsługuje zadań"
             if hermesConnected,let owner=try await db.value("owner_chat") {
+                try await sharedConversation?.tick(destination:owner)
                 try await agent.tick(destination:owner)
                 try await agent.expireApprovals()
             }
@@ -314,10 +330,26 @@ final class Runtime:ObservableObject {
         do { if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() };loginEnabled=SMAppService.mainApp.status == .enabled }
         catch { notice=Self.message(error) }
     }
+    func openHermes() {
+        guard let url=NSWorkspace.shared.urlForApplication(withBundleIdentifier:"com.nousresearch.hermes") else {
+            notice="Nie znaleziono aplikacji Hermes. Zainstaluj lub otwórz ją ręcznie.";return
+        }
+        NSWorkspace.shared.openApplication(at:url,configuration:NSWorkspace.OpenConfiguration()) { _,error in
+            if error != nil { Task { @MainActor in self.notice="Nie można otworzyć Hermesa. Spróbuj uruchomić go z Findera." } }
+        }
+    }
     func diagnosticText() -> String {
         "Indexa\nReceiver: \(receiverStatus)\nHermes: \(hermesStatus)\nMatrix: \(matrixStatus)\nTailscale: \(tailscaleStatus)\n" + tasks.map{"\($0.id) \($0.state) \($0.error ?? "")"}.joined(separator:"\n")
     }
     @discardableResult func shutdown() async -> Bool {
+        if let stopTask { return await stopTask.value }
+        startupGeneration=UUID()
+        let task=Task { await self.drain() };stopTask=task
+        let result=await task.value
+        stopTask=nil
+        return result
+    }
+    private func drain() async -> Bool {
         ready=false;matrixConnected=false;hermesConnected=false;matrixQRAvailable=false
         let pending=loops;loops.removeAll()
         pending.forEach { $0.cancel() }
@@ -334,12 +366,12 @@ final class Runtime:ObservableObject {
             notice="Usługi nie zakończyły jeszcze pracy. Poczekaj i ponów; druga kopia nie zostanie uruchomiona."
             return false
         }
-        gateway=nil;matrixProcess=nil;receiver=nil;matrix=nil;outboxWorker=nil;agent=nil
+        gateway=nil;matrixProcess=nil;receiver=nil;matrix=nil;outboxWorker=nil;agent=nil;sharedConversation=nil
         if lockFD >= 0 { flock(lockFD,LOCK_UN);close(lockFD);lockFD = -1 }
         return true
     }
     static func stateLabel(_ state:String) -> String {
-        ["queued":"W kolejce","submitting":"Przekazywanie do Hermesa","running":"W trakcie","waiting_for_approval":"Czeka na zgodę","stopping":"Zatrzymywanie","completed":"Wykonane","failed":"Błąd","cancelled":"Zatrzymane","needs_review":"Sprawdź skutki","pending":"Oczekuje","sending":"Wysyłanie","delivered":"Dostarczono","retry_wait":"Ponowi automatycznie","delivery_unknown":"Dostarczenie niepotwierdzone","resolved":"Sprawdzone","expired":"Wygasła","resolving":"Zapisywanie decyzji","unknown":"Wymaga sprawdzenia","approved":"Zgoda udzielona","denied":"Odmowa"][state] ?? state
+        ["shared_chat":"We wspólnej rozmowie","queued":"W kolejce","submitting":"Przekazywanie do Hermesa","running":"W trakcie","waiting_for_approval":"Czeka na zgodę","stopping":"Zatrzymywanie","completed":"Wykonane","failed":"Błąd","cancelled":"Zatrzymane","needs_review":"Sprawdź skutki","pending":"Oczekuje","sending":"Wysyłanie","delivered":"Dostarczono","retry_wait":"Ponowi automatycznie","delivery_unknown":"Dostarczenie niepotwierdzone","resolved":"Sprawdzone","expired":"Wygasła","resolving":"Zapisywanie decyzji","unknown":"Wymaga sprawdzenia","approved":"Zgoda udzielona","denied":"Odmowa"][state] ?? state
     }
     private func requiredSecret(_ name:SecretName) throws -> String {
         guard let value=try secrets.read(name) else { throw IndexaError("required_credential_missing") }
@@ -357,6 +389,7 @@ final class Runtime:ObservableObject {
             switch e.code {
             case "notes_review_required":return "Najpierw sprawdź operacje w sekcji Notatki wymagające sprawdzenia."
             case "notes_write_in_progress":return "Trwa zapis notatki. Poczekaj na zakończenie, zanim zatwierdzisz sprawdzenie."
+            case "shared_chat_history_gap":return "Nie można bezpiecznie wznowić przekazywania rozmowy. Historia pozostała w Hermesie; kolejka wymaga sprawdzenia."
             case "vault_locked":return "Magazyn sekretów jest niedostępny. Spróbuj połączyć ponownie."
             case "vault_existing_password_required":return "Istniejący sejf wymaga dotychczasowego hasła; nie nadpisano jego danych."
             case "vault_invalid_local_key":return "Nie można odczytać lokalnego klucza. Nie zastępujemy go nowym, aby zachować istniejące dane."

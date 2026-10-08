@@ -27,5 +27,26 @@ class NotesTests(unittest.TestCase):
             self.assertNotIn('x-coredata://fixture', ' '.join(run.call_args.args[0]))
             self.assertEqual(json.loads(run.call_args.kwargs['input']),args)
 
+    def test_uncertain_write_blocks_then_reviewed_id_never_replays(self):
+        import json, sqlite3, tempfile, types, uuid
+        with tempfile.TemporaryDirectory() as directory:
+            home=pathlib.Path(directory)
+            config=types.ModuleType('hermes_cli.config')
+            config.get_hermes_home=lambda:home
+            approval=types.ModuleType('tools.approval')
+            approval.request_tool_approval=lambda *a,**kw:{'approved':True}
+            args={'action':'create','title':'Synthetic','text':'Synthetic','operation_id':str(uuid.uuid4())}
+            later={**args,'operation_id':str(uuid.uuid4())}
+            with patch.dict('sys.modules',{'hermes_cli.config':config,'tools.approval':approval}), patch.object(notes,'invoke',return_value={'error':'uncertain','needs_review':True}) as invoke:
+                self.assertTrue(json.loads(notes.handle(args))['needs_review'])
+                self.assertEqual(json.loads(notes.handle(later))['error'],'previous_write_needs_review')
+                self.assertEqual(invoke.call_count,1)
+                with sqlite3.connect(home/'indexa-notes.sqlite') as db:
+                    db.execute("UPDATE operations SET state='reviewed',result=? WHERE id=?",(json.dumps({'error':'operation_manually_reviewed_do_not_repeat','reviewed':True}),args['operation_id']))
+                self.assertTrue(json.loads(notes.handle(args))['reviewed'])
+                self.assertEqual(invoke.call_count,1)
+                notes.handle(later)
+                self.assertEqual(invoke.call_count,2)
+
 if __name__ == '__main__':
     unittest.main()

@@ -45,7 +45,8 @@ public actor AgentWorker {
         switch status.state {
         case "completed":
             guard let output=status.output,!output.isEmpty else { try await db.review(task.id,code:"completed_without_output");return }
-            try await db.finish(task.id,state:"completed",result:"Indexa · \(task.id.prefix(8))\n\(output)",destination:destination)
+            let identity=try await hermes.finalAnswerID(session:task.session,output:output,createdAt:status.createdAt,completedAt:status.completedAt)
+            try await db.finish(task.id,state:"completed",result:output,destination:destination,deliveryEvent:identity)
         case "failed","cancelled","interrupted":
             let message=status.state == "failed" ? "Hermes zakończył zadanie błędem." : "Zadanie zostało przerwane. Wcześniejsze zmiany nie są cofane."
             try await db.finish(task.id,state:status.state,result:"Indexa · \(task.id.prefix(8))\n\(message)",destination:destination,code:status.state)

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import SQLite3
 @testable import IndexaCore
 
 struct DatabaseTests {
@@ -61,6 +62,48 @@ struct DatabaseTests {
         #expect(try await db.nextDelivery()?.state == "retry_wait")
         try await db.prune(contentDays:7,metadataDays:30,now:Date().timeIntervalSince1970+40*86400)
         #expect(try await db.nextDelivery()?.body == "result")
+    }
+
+    @Test func upgradesOriginalOutboxWithoutLosingPendingDelivery() async throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let path=directory.appendingPathComponent("v1.sqlite")
+        var old:OpaquePointer?
+        #expect(sqlite3_open(path.path,&old) == SQLITE_OK)
+        let schema="""
+        CREATE TABLE outbox(id TEXT PRIMARY KEY,event_id TEXT NOT NULL,kind TEXT NOT NULL,destination TEXT NOT NULL,body TEXT NOT NULL,markup TEXT,state TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at REAL NOT NULL DEFAULT 0,telegram_message_id TEXT,UNIQUE(event_id,kind));
+        INSERT INTO outbox(id,event_id,kind,destination,body) VALUES('old-txn','old-event','notice:0','room','unsent content');
+        CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+        INSERT INTO meta VALUES('matrix-command:old','done');
+        """
+        #expect(sqlite3_exec(old,schema,nil,nil,nil) == SQLITE_OK)
+        sqlite3_close(old)
+        let upgraded=try Database(url:path)
+        #expect(try await upgraded.nextDelivery()?.id == "old-txn")
+        #expect(try await upgraded.nextDelivery()?.body == "unsent content")
+        try await upgraded.prune(contentDays:7,metadataDays:30,now:Date().timeIntervalSince1970+40*86400)
+        #expect(try await upgraded.nextDelivery()?.body == "unsent content")
+        #expect(try await upgraded.value("matrix-command:old") == nil)
+    }
+
+    @Test func linkedMirrorDeliveryIsSharedAndRetainedUntilSent() async throws {
+        let db=try Database(url:nil)
+        let task=try await db.accept(source:"matrix",sourceID:"incoming",text:"request",recorded:1,digest:"digest")
+        let event="hermes-message:synthetic-answer"
+        // Mirror wins the race, then worker completes; both share one stable delivery.
+        try await db.enqueue(event:event,kind:"shared-answer",destination:"room",body:"answer")
+        try await db.finish(task.id,state:"completed",result:"answer",destination:"room",deliveryEvent:event)
+        #expect(try await db.outbox().count == 1)
+        #expect(try await db.tasks().first?.deliveryState == "pending")
+        try await db.prune(contentDays:7,metadataDays:30,now:Date().timeIntervalSince1970+40*86400)
+        #expect(try await db.tasks().first?.output == "answer")
+        let delivery=try #require(try await db.nextDelivery())
+        try await db.setDelivery(delivery.id,state:"delivered")
+        #expect(try await db.tasks().first?.deliveryState == "delivered")
+        try await db.prune(contentDays:7,metadataDays:30,now:Date().timeIntervalSince1970+9*86400)
+        #expect(try await db.tasks().first?.output == "")
+        #expect(try await db.outbox().first?.body == "")
     }
 
 }

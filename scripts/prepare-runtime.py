@@ -12,7 +12,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 import uuid
 
 
@@ -39,32 +38,55 @@ def check_versions(manifest, root):
             raise RuntimeError('runtime_' + code + '_incompatible')
 
 
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def recover_plugin(destination):
+    backup_root = destination.parent.parent / 'indexa-plugin-backups'
+    pending = backup_root / 'pending'
+    if pending.exists():
+        # The fixed pending path is the journal. Missing destination means the
+        # process died between the two renames; otherwise installation completed.
+        os.rename(pending, backup_root / str(uuid.uuid4()) if destination.exists() else destination)
+        sync_directory(backup_root)
+        sync_directory(destination.parent)
+    stage = backup_root / 'staged'
+    if stage.exists():
+        shutil.rmtree(stage)
+
+
 def install_plugin(source, destination):
     names = ('__init__.py', 'notes.js', 'plugin.yaml')
     # Keep backups outside plugins/, so Hermes cannot discover a duplicate plugin.
-    if all((destination / n).is_file() and (destination / n).read_bytes() == (source / n).read_bytes() for n in names):
-        return
     destination.parent.mkdir(parents=True, exist_ok=True)
     backup_root = destination.parent.parent / 'indexa-plugin-backups'
     backup_root.mkdir(mode=0o700, exist_ok=True)
-    stage = Path(tempfile.mkdtemp(prefix='.indexa-update-', dir=backup_root))
-    backup = backup_root / str(uuid.uuid4())
-    moved = False
+    recover_plugin(destination)
+    if all((destination / n).is_file() and (destination / n).read_bytes() == (source / n).read_bytes() for n in names):
+        return
+    stage, pending = backup_root / 'staged', backup_root / 'pending'
+    stage.mkdir(mode=0o700)
     try:
         for name in names:
             shutil.copy2(source / name, stage / name)
+            with (stage / name).open('rb') as file:
+                os.fsync(file.fileno())
+        sync_directory(stage)
         if destination.exists():
-            os.rename(destination, backup)
-            moved = True
-        try:
-            os.rename(stage, destination)
-        except BaseException:
-            if moved:
-                os.rename(backup, destination)
-            raise
+            os.rename(destination, pending)
+            sync_directory(destination.parent)
+            sync_directory(backup_root)
+        os.rename(stage, destination)
+        sync_directory(destination.parent)
+        sync_directory(backup_root)
     finally:
-        if stage.exists():
-            shutil.rmtree(stage)
+        # Also runs on ordinary errors. SIGKILL/power loss is recovered next start.
+        recover_plugin(destination)
 
 
 def main():

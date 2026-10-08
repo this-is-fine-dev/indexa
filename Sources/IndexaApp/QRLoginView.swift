@@ -12,6 +12,8 @@ struct QRLoginView:View {
     @State private var consentURL:URL?
     @State private var deadline=Date.distantFuture
     @State private var disconnected=false
+    @State private var visible=true
+    @State private var generation=UUID()
     private var phase:String { state["state"] as? String ?? "starting" }
     var body:some View {
         VStack(spacing:16) {
@@ -24,7 +26,8 @@ struct QRLoginView:View {
                         .padding(16).background(.white).accessibilityLabel("Kod QR do logowania Element X")
                 }
                 TimelineView(.periodic(from:.now,by:1)) { context in
-                    Text("Pozostało około \(max(0,Int(deadline.timeIntervalSince(context.date)))) s na parowanie.").font(.caption)
+                    let seconds=max(0,Int(deadline.timeIntervalSince(context.date)))
+                    Text(seconds > 0 ? "Pozostało około \(seconds) s na parowanie." : "Sprawdzanie wyniku parowania…").font(.caption)
                 }
             case "code":
                 Text("Wpisz kod wyświetlony przez Element X na Twoim iPhonie.")
@@ -62,11 +65,10 @@ struct QRLoginView:View {
                 do {
                     try await Task.sleep(nanoseconds:500_000_000)
                     if busy || phase == "done" || phase == "error" { continue }
-                    if Date() >= deadline {
-                        state["state"]="error";error="Czas parowania upłynął. Wygeneruj nowy kod.";continue
-                    }
+                    let requestGeneration=generation
                     let next=try await runtime.pairing("status")
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled,visible else { return }
+                    guard requestGeneration == generation else { continue }
                     if let current=state["id"] as? String,next["id"] as? String != current {
                         state["state"]="error";error="Sesja parowania została zakończona. Wygeneruj nowy kod.";continue
                     }
@@ -81,18 +83,32 @@ struct QRLoginView:View {
             }
         }
         .onDisappear {
-            if let id=state["id"] as? String { Task { _ = try? await runtime.pairing("command",["id":id,"cancel":true]) } }
+            visible=false;generation=UUID()
+            if phase != "done",let id=state["id"] as? String { Task { _ = try? await runtime.pairing("command",["id":id,"cancel":true]) } }
         }
     }
     private func start() async {
+        guard !busy,visible else { return }
         busy=true;defer { busy=false };error="";code="";consentURL=nil;disconnected=false;deadline=Date().addingTimeInterval(180);state=["state":"starting"]
-        do { state=try await runtime.pairing("start",[:]) }
-        catch { self.error="Nie można rozpocząć parowania.";state=["state":"error"] }
+        generation=UUID()
+        do {
+            let next=try await runtime.pairing("start",[:])
+            guard visible,!Task.isCancelled else {
+                if let id=next["id"] as? String { _ = try? await runtime.pairing("command",["id":id,"cancel":true]) };return
+            }
+            state=next
+        } catch {
+            guard visible,!Task.isCancelled else { return }
+            self.error="Nie można rozpocząć parowania. Jeśli żądanie dotarło do serwera, poprzednia próba wygaśnie automatycznie.";state=["state":"error"]
+        }
     }
     private func command(_ value:[String:Any]) async {
         busy=true;defer { busy=false }
         guard let id=state["id"] as? String else { return }
-        do { state=try await runtime.pairing("command",value.merging(["id":id]){_,new in new}) }
+        do {
+            let next=try await runtime.pairing("command",value.merging(["id":id]){_,new in new})
+            guard visible,!Task.isCancelled else { return };state=next
+        }
         catch { self.error="Nie udało się potwierdzić tego kroku. Sprawdzamy stan sesji.";disconnected=true }
     }
     private func qrImage(_ encoded:String) -> NSImage? {

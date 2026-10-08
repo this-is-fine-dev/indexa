@@ -76,6 +76,18 @@ public actor Database {
             let migration = "ALTER TABLE outbox ADD COLUMN created_at REAL NOT NULL DEFAULT 0; UPDATE outbox SET created_at=strftime('%s','now'); INSERT OR IGNORE INTO schema_migrations VALUES(2);"
             guard sqlite3_exec(db, migration, nil, nil, nil) == SQLITE_OK else { sqlite3_close(db); throw IndexaError("database_migration") }
         }
+        var outputColumn:OpaquePointer?
+        let hasOutput = sqlite3_prepare_v2(db,"SELECT output FROM tasks LIMIT 0",-1,&outputColumn,nil) == SQLITE_OK
+        sqlite3_finalize(outputColumn)
+        if !hasOutput {
+            guard sqlite3_exec(db,"ALTER TABLE tasks ADD COLUMN output TEXT; INSERT OR IGNORE INTO schema_migrations VALUES(3)",nil,nil,nil) == SQLITE_OK else { sqlite3_close(db);throw IndexaError("database_migration") }
+        }
+        var deliveryColumn:OpaquePointer?
+        let hasDeliveryLink = sqlite3_prepare_v2(db,"SELECT delivery_event FROM tasks LIMIT 0",-1,&deliveryColumn,nil) == SQLITE_OK
+        sqlite3_finalize(deliveryColumn)
+        if !hasDeliveryLink {
+            guard sqlite3_exec(db,"ALTER TABLE tasks ADD COLUMN delivery_event TEXT; INSERT OR IGNORE INTO schema_migrations VALUES(4)",nil,nil,nil) == SQLITE_OK else { sqlite3_close(db);throw IndexaError("database_migration") }
+        }
         // Old command tombstones have no timestamp; retain them for one complete metadata window.
         sqlite3_exec(db, "INSERT OR IGNORE INTO command_receipts SELECT substr(key,16),strftime('%s','now') FROM meta WHERE key LIKE 'matrix-command:%'", nil, nil, nil)
     }
@@ -164,12 +176,12 @@ public actor Database {
     }
     private func taskRecords(_ suffix:String, _ values:[String?] = []) throws -> [TaskRecord] {
         try query("SELECT t.*,e.source,e.transcript,e.received_at FROM tasks t JOIN inbound_events e ON e.id=t.event_id " + suffix,values).map { row in
-            let deliveries = try query("SELECT body,state FROM outbox WHERE event_id=? AND kind LIKE 'result:%' ORDER BY rowid",[row["event_id"]])
-            return TaskRecord(id:row["event_id"]!,source:row["source"]!,text:row["transcript"]!,session:row["hermes_session_id"]!,state:row["state"]!,runID:row["hermes_run_id"],error:row["terminal_error_code"],output:deliveries.isEmpty ? nil : deliveries.compactMap{$0["body"]}.joined(separator:"\n"),deliveryState:deliveries.first(where:{$0["state"] != "delivered"})?["state"] ?? deliveries.first?["state"],created:Double(row["received_at"]!)!)
+            let deliveries = try query("SELECT body,state FROM outbox WHERE event_id=? AND (kind LIKE 'result:%' OR kind LIKE 'shared-answer:%') ORDER BY rowid",[row["delivery_event"] ?? row["event_id"]])
+            return TaskRecord(id:row["event_id"]!,source:row["source"]!,text:row["transcript"]!,session:row["hermes_session_id"]!,state:row["state"]!,runID:row["hermes_run_id"],error:row["terminal_error_code"],output:row["output"] ?? (deliveries.isEmpty ? nil : deliveries.compactMap{$0["body"]}.joined(separator:"\n")),deliveryState:deliveries.first(where:{$0["state"] != "delivered"})?["state"] ?? deliveries.first?["state"],created:Double(row["received_at"]!)!)
         }
     }
     public func tasks() throws -> [TaskRecord] {
-        try taskRecords("ORDER BY CASE WHEN t.state IN ('queued','submitting','running','waiting_for_approval','stopping','needs_review') THEN 0 ELSE 1 END,e.received_at DESC LIMIT 200")
+        try taskRecords("ORDER BY CASE WHEN t.state IN ('submitting','running','waiting_for_approval','stopping','needs_review') THEN 0 WHEN t.state='queued' THEN 1 ELSE 2 END,e.received_at DESC LIMIT 200")
     }
     public func nextTask() throws -> TaskRecord? {
         guard try query("SELECT 1 FROM tasks WHERE state='needs_review' LIMIT 1").isEmpty else { return nil }
@@ -194,12 +206,12 @@ public actor Database {
             _ = try query("UPDATE approvals SET state='unknown' WHERE state='resolving'")
         }
     }
-    public func finish(_ id: String, state: String, result: String, destination: String, code: String? = nil) throws {
+    public func finish(_ id: String, state: String, result: String, destination: String, code: String? = nil, deliveryEvent:String? = nil) throws {
         try transaction {
-            _ = try query("UPDATE tasks SET state=?,terminal_error_code=?,updated_at=? WHERE event_id=?",[state,code,String(Date().timeIntervalSince1970),id])
+            _ = try query("UPDATE tasks SET state=?,terminal_error_code=?,updated_at=?,output=?,delivery_event=? WHERE event_id=?",[state,code,String(Date().timeIntervalSince1970),result,deliveryEvent,id])
             _ = try query("UPDATE inbound_events SET status=? WHERE id=?",[state,id])
             _ = try query("UPDATE approvals SET state='closed' WHERE event_id=? AND state='pending'",[id])
-            try enqueue(event:id,kind:"result",destination:destination,body:result)
+            try enqueue(event:deliveryEvent ?? id,kind:deliveryEvent == nil ? "result" : "shared-answer",destination:destination,body:result)
         }
     }
     public func enqueue(event: String = UUID().uuidString, kind: String = "notice", destination: String, body: String, markup: String? = nil) throws {
@@ -246,9 +258,9 @@ public actor Database {
     public func settleApproval(_ id: String, state: String) throws { _ = try query("UPDATE approvals SET state=? WHERE id=?",[state,id]) }
     public func prune(contentDays: Int, metadataDays: Int, now:Double = Date().timeIntervalSince1970) throws {
         try transaction {
-            let terminal = "SELECT event_id FROM tasks WHERE state IN ('completed','failed','cancelled','interrupted') AND updated_at < ? AND NOT EXISTS(SELECT 1 FROM outbox o WHERE o.event_id=tasks.event_id AND o.state!='delivered')"
+            let terminal = "SELECT event_id FROM tasks WHERE state IN ('completed','failed','cancelled','interrupted') AND updated_at < ? AND NOT EXISTS(SELECT 1 FROM outbox o WHERE o.event_id=COALESCE(tasks.delivery_event,tasks.event_id) AND o.state!='delivered')"
             _ = try query("UPDATE inbound_events SET transcript='' WHERE id IN (\(terminal))",[String(now-Double(contentDays)*86400)])
-            _ = try query("UPDATE tasks SET submit_json=NULL WHERE event_id IN (\(terminal))",[String(now-Double(contentDays)*86400)])
+            _ = try query("UPDATE tasks SET submit_json=NULL,output=NULL WHERE event_id IN (\(terminal))",[String(now-Double(contentDays)*86400)])
             _ = try query("UPDATE outbox SET body='',markup=NULL WHERE state='delivered' AND event_id IN (\(terminal))",[String(now-Double(contentDays)*86400)])
             _ = try query("UPDATE outbox SET body='',markup=NULL WHERE state='delivered' AND created_at < ?",[String(now-Double(contentDays)*86400)])
             _ = try query("UPDATE approvals SET description='' WHERE state NOT IN ('pending','resolving','unknown') AND expiration < ?",[String(now-Double(contentDays)*86400)])
