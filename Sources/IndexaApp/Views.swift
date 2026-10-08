@@ -25,7 +25,7 @@ struct MenuView:View {
 struct MainView:View {
     @ObservedObject var runtime:Runtime
     @ObservedObject private var navigation=AppWindow.shared
-    private var selectedPage: AppPage { navigation.page == .pebble || navigation.page == .diagnostics ? .settings : navigation.page }
+    private var selectedPage: AppPage { navigation.page == .activity ? .dashboard : navigation.page == .pebble || navigation.page == .diagnostics ? .settings : navigation.page }
     var body:some View {
         VStack(spacing:0) {
             HStack(spacing:6) {
@@ -39,15 +39,16 @@ struct MainView:View {
                 Spacer(minLength:0)
             }.padding(12)
             Divider()
-            if navigation.page == .pebble || navigation.page == .diagnostics {
+            if navigation.page == .pebble || navigation.page == .diagnostics || navigation.page == .activity {
                 HStack {
-                    Button { navigation.page = .settings } label: { Label("Ustawienia", systemImage: "chevron.left") }
+                    Button { navigation.page = navigation.page == .activity ? .dashboard : .settings } label: { Label(navigation.page == .activity ? "Start" : "Ustawienia", systemImage: "chevron.left") }
                     Spacer()
                     Text(navigation.page.title).foregroundStyle(.secondary)
                 }.padding(.horizontal, 24).padding(.top, 12)
             }
             Group {
                 if navigation.page == .dashboard { Dashboard(runtime:runtime) }
+                else if navigation.page == .activity { TaskActivityView(runtime:runtime) }
                 else if navigation.page == .integrations { IntegrationsView(runtime:runtime) }
                 else if navigation.page == .diagnostics { DiagnosticsView(runtime:runtime) }
                 else { SettingsView(runtime:runtime,page:navigation.page) }
@@ -101,19 +102,90 @@ private struct ConnectionBadge: View {
     }
 }
 
-struct Dashboard:View {
+struct Dashboard: View {
+    @ObservedObject var runtime: Runtime
+    private var currentTasks: [TaskRecord] {
+        runtime.tasks.filter { ["queued", "submitting", "running", "waiting_for_approval", "stopping"].contains($0.state) }
+    }
+    private var needsDecision: Bool {
+        runtime.vaultNeedsPassphrase || !runtime.pendingNoteWrites.isEmpty || !runtime.approvals.isEmpty || runtime.tasks.contains { $0.state == "needs_review" }
+    }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                HStack(spacing: 18) {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().scaledToFit().frame(width: 76, height: 76).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Indexa").font(.largeTitle.bold())
+                        Text("Twój osobisty asystent").font(.title3).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Co chcesz dziś załatwić?").font(.title2.bold())
+                    Text("Napisz w Hermesie na Macu lub w Element X na telefonie. Indexa może sprawdzić kalendarz, zapisać notatkę albo dodać przypomnienie.")
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 12) {
+                        Button { runtime.openHermes() } label: { Label("Otwórz rozmowę", systemImage: "bubble.left.and.bubble.right") }
+                            .buttonStyle(.borderedProminent).controlSize(.large)
+                        Button("Dostęp do aplikacji") { AppWindow.shared.page = .integrations }.controlSize(.large)
+                    }
+                }
+                if runtime.paused {
+                    HStack {
+                        Label("Nowe zadania są wstrzymane", systemImage: "pause.circle")
+                        Spacer()
+                        Button("Wznów") { Task { await runtime.togglePause() } }.disabled(!runtime.ready)
+                    }.padding(16).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                }
+                if needsDecision {
+                    HStack {
+                        Label(runtime.vaultNeedsPassphrase ? "Odblokuj Indexę, aby kontynuować" : "Potrzebna Twoja decyzja", systemImage: "hand.raised")
+                        Spacer()
+                        Button("Sprawdź") { AppWindow.shared.page = .activity }
+                    }.padding(16).background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                }
+                if runtime.outbox.contains(where: { ["failed", "delivery_unknown"].contains($0.state) }) {
+                    HStack {
+                        Label("Nie udało się dostarczyć odpowiedzi", systemImage: "exclamationmark.bubble")
+                        Spacer()
+                        Button("Sprawdź") { AppWindow.shared.page = .diagnostics }
+                    }.padding(16).background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                }
+                if !currentTasks.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Teraz").font(.headline)
+                        ForEach(currentTasks.prefix(3)) { task in
+                            HStack(spacing: 16) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(task.text.isEmpty ? "Przetwarzanie polecenia" : task.text).lineLimit(2)
+                                    Text(Runtime.stateLabel(task.state)).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                        }
+                        if currentTasks.count > 3 { Text("Pozostałe w kolejce: \(currentTasks.count - 3)").font(.caption).foregroundStyle(.secondary) }
+                    }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                }
+                Button { AppWindow.shared.page = .activity } label: { Label("Historia i szczegóły zadań", systemImage: "clock.arrow.circlepath") }
+                    .buttonStyle(.link)
+            }.padding(32).frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
+        }
+    }
+}
+
+struct TaskActivityView:View {
     @ObservedObject var runtime:Runtime
     @State private var selected:TaskRecord?
     @State private var review:TaskRecord?
-    @State private var delivery:OutboxItem?
     @State private var noteReview=[String]()
     @State private var confirmNotes=false
     @State private var vaultPassphrase=""
     var body:some View {
         VStack(alignment:.leading,spacing:16) {
             HStack {
-                Image(systemName:"waveform.circle.fill").font(.largeTitle).foregroundStyle(.teal)
-                VStack(alignment:.leading) { Text("Indexa").font(.largeTitle.bold());Text("Od pomysłu do zapisanej notatki").foregroundStyle(.secondary) }
+                VStack(alignment:.leading,spacing:6) { Text("Zadania").font(.largeTitle.bold());Text("Historia poleceń i sprawy wymagające Twojej decyzji.").foregroundStyle(.secondary) }
                 Spacer()
             }
             Label(runtime.summary,systemImage:runtime.statusSymbol).font(.title2)
@@ -165,21 +237,14 @@ struct Dashboard:View {
                     if runtime.tasks.isEmpty { Text("Tu pojawią się polecenia z Pebble i Matrix.").foregroundStyle(.secondary) }
                     ForEach(runtime.tasks.prefix(200)) { task in
                         HStack {
-                            VStack(alignment:.leading) { Text("\(task.source == "pebble" ? "Pierścień":"Matrix") · \(task.id.prefix(8))");Text(Date(timeIntervalSince1970:task.created),style:.time).font(.caption).foregroundStyle(.secondary) }
+                            VStack(alignment:.leading) { Text(task.text.isEmpty ? "Zadanie bez zachowanej treści" : task.text).lineLimit(2);Text(Date(timeIntervalSince1970:task.created),style:.time).font(.caption).foregroundStyle(.secondary) }
                             Spacer();Text(Runtime.stateLabel(task.state)).font(.callout)
                             Button("Szczegóły") { selected=task }
                             if task.state == "needs_review" { Button("Sprawdziłem…") { review=task } }
                         }
                     }
                 }
-                Section("Dostarczenie do Matrix") {
-                    if runtime.outbox.filter({$0.state != "delivered"}).count > 30 { Text("Pokazujemy pierwsze 30 oczekujących wiadomości z bieżącego podglądu kolejki.").font(.caption).foregroundStyle(.secondary) }
-                    ForEach(runtime.outbox.filter{$0.state != "delivered"}.prefix(30)) { item in
-                        HStack { Text(String(item.eventID.prefix(8)));Spacer();Text(Runtime.stateLabel(item.state))
-                            if ["failed","delivery_unknown"].contains(item.state) { Button("Ponów wiadomość…") { delivery=item } }
-                        }
-                    }
-                }
+
             }
             }
         }.padding(24)
@@ -193,9 +258,7 @@ struct Dashboard:View {
         .confirmationDialog("Potwierdzasz ręczne sprawdzenie skutków zadania?",isPresented:Binding(get:{review != nil},set:{if !$0 { review=nil }})) {
             Button("Zamknij bez ponawiania") { if let task=review { Task { await runtime.resolve(task) } };review=nil }
         } message: { Text("Najpierw sprawdź dokładną notatkę i status Hermesa. Nie uruchomimy ponownie tego zadania.") }
-        .confirmationDialog("Ponowić wiadomość?",isPresented:Binding(get:{delivery != nil},set:{if !$0 { delivery=nil }})) {
-            Button("Ponów wysyłkę") { if let item=delivery { Task { await runtime.retry(item) } };delivery=nil }
-        } message: { Text("Ponowienie używa tego samego identyfikatora wiadomości Matrix i nie uruchamia ponownie zadania Hermesa.") }
+
     }
     private func taskDetails(_ task:TaskRecord) -> some View {
             VStack(alignment:.leading,spacing:12) {
@@ -228,16 +291,39 @@ struct Dashboard:View {
 
 struct DiagnosticsView:View {
     @ObservedObject var runtime:Runtime
+    @State private var delivery: OutboxItem?
     var body:some View {
         VStack(alignment:.leading,spacing:16) {
             Text("Diagnostyka").font(.title2)
             Text("Bez transkrypcji, odpowiedzi i sekretów.").foregroundStyle(.secondary)
+            DisclosureGroup("Kolejka dostarczenia wiadomości") {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        let pending = runtime.outbox.filter { $0.state != "delivered" }
+                        if pending.isEmpty { Text("Wszystkie odpowiedzi zostały dostarczone.").foregroundStyle(.secondary) }
+                        ForEach(pending.prefix(30)) { item in
+                            HStack {
+                                Text(String(item.eventID.prefix(8))).font(.caption.monospaced())
+                                Spacer()
+                                Text(Runtime.stateLabel(item.state))
+                                if ["failed", "delivery_unknown"].contains(item.state) {
+                                    Button("Ponów wiadomość…") { delivery = item }
+                                }
+                            }
+                        }
+                        if pending.count > 30 { Text("Pokazujemy pierwsze 30 oczekujących wiadomości.").font(.caption).foregroundStyle(.secondary) }
+                    }.padding(.top, 8)
+                }.frame(maxHeight: 180)
+            }
             ScrollView {
                 Text(runtime.diagnosticText()).font(.caption.monospaced()).textSelection(.enabled)
                     .frame(maxWidth:.infinity,alignment:.leading)
             }
             Button("Zapisz diagnostykę…") { exportDiagnostics() }
         }.padding(24)
+        .confirmationDialog("Ponowić wiadomość?", isPresented: Binding(get: { delivery != nil }, set: { if !$0 { delivery = nil } })) {
+            Button("Ponów wysyłkę") { if let item = delivery { Task { await runtime.retry(item) } }; delivery = nil }
+        } message: { Text("Ponowienie zachowuje identyfikator wiadomości i nie uruchamia ponownie zadania Hermesa.") }
     }
     private func exportDiagnostics() {
         let panel=NSSavePanel();panel.nameFieldStringValue="indexa-diagnostics.txt"

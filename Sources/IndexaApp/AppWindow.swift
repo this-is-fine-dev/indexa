@@ -2,11 +2,12 @@ import AppKit
 import SwiftUI
 
 enum AppPage: String, CaseIterable, Identifiable {
-    case dashboard, matrix, pebble, integrations, settings, diagnostics
+    case dashboard, activity, matrix, pebble, integrations, settings, diagnostics
     var id: Self { self }
     var title: String {
         switch self {
-        case .dashboard: return "Przegląd"
+        case .dashboard: return "Start"
+        case .activity: return "Zadania"
         case .matrix: return "Matrix"
         case .pebble: return "Pierścień"
         case .integrations: return "Integracje"
@@ -16,7 +17,8 @@ enum AppPage: String, CaseIterable, Identifiable {
     }
     var symbol: String {
         switch self {
-        case .dashboard: return "square.grid.2x2"
+        case .dashboard: return "house"
+        case .activity: return "clock.arrow.circlepath"
         case .matrix: return "bubble.left.and.bubble.right"
         case .pebble: return "waveform"
         case .integrations: return "puzzlepiece.extension"
