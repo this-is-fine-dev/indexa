@@ -4,7 +4,7 @@
 
 Odbiornik odrzucał podpisane `single-click-hold` kodem 422 `unsupported_trigger`, choć weryfikacja podpisu obsługiwała ten gest. Test połączenia (`test-event`) przechodził, co maskowało błąd. Screen użytkownika z Recent runs potwierdził 422 dla nagrań i 202 dla testów. Ingress akceptuje teraz oba gesty nagrania; zachowane są podpisy, rozróżnienie testów i deduplikacja. Instrukcja w aplikacji opisuje osobną konfigurację każdego gestu.
 
-Test regresji najpierw odtworzył 422, następnie przeszedł dla obu podpisanych gestów, duplikatów, testu bez zadania i zmienionego nagłówka odrzucanego jako 401. Pełny zestaw Swift: 45 testów zaliczonych (opcjonalny test SDK pominięty). Zainstalowano i ponownie uruchomiono 0.5.6 w `/Applications`; odbiornik i Matrix zwracają 200. Fizyczne nagranie po poprawce czeka na potwierdzenie użytkownika. Bez zmian VPN/DNS/Tailscale.
+Test regresji najpierw odtworzył 422, następnie przeszedł dla obu podpisanych gestów, duplikatów, testu bez zadania i zmienionego nagłówka odrzucanego jako 401. Pełny zestaw Swift: 45 testów zaliczonych (opcjonalny test SDK pominięty). Zainstalowano i ponownie uruchomiono 0.5.6 w `/Applications`; odbiornik i Matrix zwracają 200. Użytkownik potwierdził odpowiedź w Element X po zwykłym przytrzymaniu; lokalny wpis Pebble i zadanie mają stan `completed`, bez błędu. Bez zmian VPN/DNS/Tailscale.
 
 ## Pebble przez istniejące HTTPS Matrixa — 2026-10-08
 
