@@ -15,6 +15,7 @@ public actor AgentWorker {
             // Also covers recordings received before the Matrix room was paired.
             try await db.enqueuePebbleTranscript(event:task.id,destination:destination)
             guard !paused else { return }
+            let preparationStarted=ProcessInfo.processInfo.systemUptime
             let capabilities=try await hermes.capabilities()
             guard let features=capabilities["features"] as? [String:Any],features["run_submission"] as? Bool == true,
                   features["run_status"] as? Bool == true else { throw IndexaError("hermes_capabilities_missing") }
@@ -29,6 +30,8 @@ public actor AgentWorker {
                 return
             }
             try await db.markSubmitting(task.id,payload:payload)
+            await db.recordLatency(event:task.id,stage:.preparation,seconds:ProcessInfo.processInfo.systemUptime-preparationStarted)
+            let submissionStarted=ProcessInfo.processInfo.systemUptime
             do {
                 let run:String
                 do { run=try await hermes.submit(payload:payload,key:task.id) }
@@ -37,9 +40,12 @@ public actor AgentWorker {
                     run=try await hermes.submit(payload:payload,key:task.id)
                 }
                 try await db.setRun(task.id,run:run)
+                await db.recordLatency(event:task.id,stage:.submission,seconds:ProcessInfo.processInfo.systemUptime-submissionStarted,status:200)
             } catch let error as APIError where !error.ambiguous && error.code >= 400 && error.code < 500 && error.code != 409 {
+                await db.recordLatency(event:task.id,stage:.submission,seconds:ProcessInfo.processInfo.systemUptime-submissionStarted,status:error.code)
                 try await db.finish(task.id,state:"failed",result:"Indexa: Hermes odrzucił zadanie (\(error.code)).",destination:destination,code:"submit_\(error.code)")
             } catch {
+                await db.recordLatency(event:task.id,stage:.submission,seconds:ProcessInfo.processInfo.systemUptime-submissionStarted,status:(error as? APIError)?.code ?? -1)
                 try await db.review(task.id,code:"submission_unknown")
                 try await db.enqueue(event:task.id,kind:"unknown",destination:destination,body:"Indexa: nie znam stanu wykonania zadania \(task.id.prefix(8)). Kolejka została zatrzymana do sprawdzenia; nie powtarzam polecenia.")
             }
@@ -47,15 +53,33 @@ public actor AgentWorker {
         }
         guard let run=task.runID else { try await db.review(task.id,code:"missing_run_id");return }
         let status:RunStatus
+        let statusStarted=ProcessInfo.processInfo.systemUptime
         do { status=try await hermes.status(run) }
-        catch let error as APIError where error.code == 404 { try await db.review(task.id,code:"run_not_found");return }
-        catch let error as IndexaError where error.code == "unknown_run_state" { try await db.review(task.id,code:error.code);return }
+        catch {
+            await db.recordLatency(event:task.id,stage:.statusPoll,seconds:ProcessInfo.processInfo.systemUptime-statusStarted,status:(error as? APIError)?.code ?? -1)
+            if (error as? APIError)?.code == 404 { try await db.review(task.id,code:"run_not_found");return }
+            if let error=error as? IndexaError,error.code == "unknown_run_state" { try await db.review(task.id,code:error.code);return }
+            throw error
+        }
+        let statusElapsed=ProcessInfo.processInfo.systemUptime-statusStarted
+        if statusElapsed >= 0.5 || ["completed","failed","cancelled","interrupted"].contains(status.state) {
+            await db.recordLatency(event:task.id,stage:.statusPoll,seconds:statusElapsed,status:200)
+        }
         switch status.state {
         case "completed":
             guard let output=status.output,!output.isEmpty else { try await db.review(task.id,code:"completed_without_output");return }
-            let identity=try await hermes.finalAnswerID(session:task.session,output:output,createdAt:status.createdAt,completedAt:status.completedAt)
+            if let start=status.createdAt,let end=status.completedAt { await db.recordLatency(event:task.id,stage:.hermes,seconds:end-start,status:200) }
+            let lookupStarted=ProcessInfo.processInfo.systemUptime
+            let identity:String?
+            do { identity=try await hermes.finalAnswerID(session:task.session,output:output,createdAt:status.createdAt,completedAt:status.completedAt) }
+            catch {
+                await db.recordLatency(event:task.id,stage:.answerLookup,seconds:ProcessInfo.processInfo.systemUptime-lookupStarted,status:(error as? APIError)?.code ?? -1)
+                throw error
+            }
+            await db.recordLatency(event:task.id,stage:.answerLookup,seconds:ProcessInfo.processInfo.systemUptime-lookupStarted)
             try await db.finish(task.id,state:"completed",result:output,destination:destination,deliveryEvent:identity)
         case "failed","cancelled","interrupted":
+            if let start=status.createdAt,let end=status.completedAt { await db.recordLatency(event:task.id,stage:.hermes,seconds:end-start,status:-1) }
             let message=status.state == "failed" ? "Hermes zakończył zadanie błędem." : "Zadanie zostało przerwane. Wcześniejsze zmiany nie są cofane."
             try await db.finish(task.id,state:status.state,result:"Indexa · \(task.id.prefix(8))\n\(message)",destination:destination,code:status.state)
         case "waiting_for_approval":
@@ -103,6 +127,8 @@ public actor OutboxWorker {
         guard let item=try await db.nextDelivery(),
               ["pending","retry_wait"].contains(item.state),item.nextAttempt <= now else { return }
         try await db.setDelivery(item.id,state:"sending")
+        let deliveryStarted=ProcessInfo.processInfo.systemUptime
+        let deliveryStage:LatencyStage=item.kind.hasPrefix("transcript:") ? .transcriptDelivery : .delivery
         do {
             let attachment:Attachment?
             if item.kind.contains(":attachment:") {
@@ -111,12 +137,17 @@ public actor OutboxWorker {
             } else { attachment=nil }
             let message=try await matrix.send(id:item.id,room:item.destination,text:item.body,attachment:attachment)
             try await db.setDelivery(item.id,state:"delivered",messageID:message)
+            await db.recordLatency(event:item.eventID,stage:deliveryStage,seconds:ProcessInfo.processInfo.systemUptime-deliveryStarted,status:200)
         } catch let e as APIError {
+            await db.recordLatency(event:item.eventID,stage:deliveryStage,seconds:ProcessInfo.processInfo.systemUptime-deliveryStarted,status:e.code)
             if e.ambiguous || e.code == 429 || e.code == 408 || e.code >= 500 || e.code < 0 {
                 let wait=e.retryAfter ?? min(300,pow(2,Double(min(item.attempts+1,8))))+Double.random(in:0...1)
                 try await db.setDelivery(item.id,state:"retry_wait",next:now+max(1,wait))
             } else { try await db.setDelivery(item.id,state:"failed") }
-        } catch { try await db.setDelivery(item.id,state:"failed") }
+        } catch {
+            await db.recordLatency(event:item.eventID,stage:deliveryStage,seconds:ProcessInfo.processInfo.systemUptime-deliveryStarted,status:-1)
+            try await db.setDelivery(item.id,state:"failed")
+        }
     }
 }
 
@@ -124,8 +155,8 @@ public actor MatrixReceiver {
     private let db:Database,matrix:MatrixClient,worker:AgentWorker
     private var busy=false
     public init(database:Database,matrix:MatrixClient,worker:AgentWorker) { db=database;self.matrix=matrix;self.worker=worker }
-    public func poll() async throws {
-        guard !busy else { return };busy=true;defer { busy=false }
+    @discardableResult public func poll() async throws -> Bool {
+        guard !busy else { return false };busy=true;defer { busy=false }
         guard let events=try await matrix.call("events")["events"] as? [[String:Any]] else { throw IndexaError("invalid_matrix_events") }
         let owner=try await db.value("owner_chat"),user=try await db.value("owner_user")
         for event in events {
@@ -163,5 +194,6 @@ public actor MatrixReceiver {
             if event["attachment_error"] != nil { _ = try? await matrix.call("feedback",["id":id,"state":"failed"]) }
             else if attachments.isEmpty && (text.hasPrefix("!") || text.hasPrefix("/")) { _ = try? await matrix.call("feedback",["id":id,"state":"completed"]) }
         }
+        return !events.isEmpty
     }
 }

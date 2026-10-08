@@ -22,6 +22,7 @@ final class Runtime:ObservableObject {
     @Published var pendingNoteWrites=[String]()
     private let profileHome=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hermes/profiles/indexa")
     @Published var notice=""
+    @Published var latencyReport=""
     @Published var ready=false
     @Published var loginEnabled=SMAppService.mainApp.status == .enabled
     var db:Database?
@@ -54,6 +55,8 @@ final class Runtime:ObservableObject {
     @Published var matrixDevices=[MatrixDevice]()
     @Published var matrixQRAvailable=false
     private var outboxWorker:OutboxWorker?
+    private var deliveryTask:Task<Void,Never>?
+    private var pollingHermes=false
     private var loops=[Task<Void,Never>]()
     private var gateway:Process?
     private var lockFD:Int32 = -1
@@ -124,11 +127,9 @@ final class Runtime:ObservableObject {
             try setupMatrix()
             ready=true
             // Each service has its own loop: a Matrix outage cannot stall Hermes or the dashboard.
-            loops.append(poll(every:2) { await self.pollMatrix() })
+            loops.append(poll(every:0) { await self.pollMatrix(hermes) })
             loops.append(poll(every:1) { await self.pollHermes(hermes) })
-            loops.append(poll(every:1) {
-                do { try await self.outboxWorker?.tick() } catch { if !Task.isCancelled { self.notice=Self.message(error) } }
-            })
+            loops.append(poll(every:1) { self.sendPending() })
             loops.append(poll(every:2) { await self.refreshRecords();await self.refreshMCP() })
             loops.append(poll(every:2) { await self.refreshTyping() })
             loops.append(poll(every:2) { await self.refreshMatrixFeedback() })
@@ -272,7 +273,7 @@ final class Runtime:ObservableObject {
     func publishIfChanged<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<Runtime, Value>, _ value: Value) {
         if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
     }
-    private func pollMatrix() async {
+    private func pollMatrix(_ hermes:HermesClient) async {
         guard let db,let matrix else { return }
         do {
             let health=try await matrix.call("health")
@@ -285,11 +286,18 @@ final class Runtime:ObservableObject {
             matrixFailures=0
             publishIfChanged(\.matrixConnected, health["ready"] as? Bool == true)
             publishIfChanged(\.matrixStatus, matrixConnected ? "Połączony · E2EE" : "Oczekiwanie: \(health["problem"] as? String ?? "sync")")
-            if matrixConnected { try await receiver?.poll() }
+            if matrixConnected {
+                if try await receiver?.poll() == true {
+                    await pollHermes(hermes)
+                    await refreshTyping()
+                    sendPending()
+                }
+            } else { try await Task.sleep(nanoseconds:1_000_000_000) }
         } catch { if !Task.isCancelled { matrixConnected=false;matrixQRAvailable=false;matrixStatus="Brak połączenia: \(Self.message(error))";matrixFailures=min(matrixFailures+1,4);try? await Task.sleep(nanoseconds:UInt64(1 << matrixFailures)*1_000_000_000) } }
     }
     private func pollHermes(_ hermes:HermesClient) async {
-        guard let db,let agent else { return }
+        guard !pollingHermes,let db,let agent else { return }
+        pollingHermes=true;defer { pollingHermes=false }
         do {
             let caps=try await hermes.capabilities()
             guard !Task.isCancelled else { return }
@@ -298,12 +306,30 @@ final class Runtime:ObservableObject {
             publishIfChanged(\.hermesConnected, features["run_submission"] as? Bool == true)
             publishIfChanged(\.hermesStatus, hermesConnected ? "API gotowe" : "API nie obsługuje zadań")
             if hermesConnected,let owner=try await db.value("owner_chat") {
-                do { try await sharedConversation?.tick(destination:owner) }
-                catch { notice="Nie udało się odświeżyć historii rozmowy. Spróbuję ponownie." }
+                let historyEvent=try await db.nextTask()?.id ?? "shared-chat"
+                let historyStarted=ProcessInfo.processInfo.systemUptime
+                do {
+                    try await sharedConversation?.tick(destination:owner)
+                    let elapsed=ProcessInfo.processInfo.systemUptime-historyStarted
+                    if elapsed >= 0.5 { await db.recordLatency(event:historyEvent,stage:.history,seconds:elapsed,status:200) }
+                }
+                catch {
+                    await db.recordLatency(event:historyEvent,stage:.history,seconds:ProcessInfo.processInfo.systemUptime-historyStarted,status:(error as? APIError)?.code ?? -1)
+                    notice="Nie udało się odświeżyć historii rozmowy. Spróbuję ponownie."
+                }
                 try await agent.tick(destination:owner)
                 try await agent.expireApprovals()
+                sendPending()
             }
         } catch { if !Task.isCancelled { hermesConnected=false;hermesStatus="Brak potwierdzenia: \(Self.message(error))";hermesFailures=min(hermesFailures+1,4);try? await Task.sleep(nanoseconds:UInt64(1 << hermesFailures)*1_000_000_000) } }
+    }
+    private func sendPending() {
+        guard !Task.isCancelled,deliveryTask == nil,let outboxWorker else { return }
+        deliveryTask=Task {
+            defer { deliveryTask=nil }
+            do { try await outboxWorker.tick() }
+            catch { if !Task.isCancelled { notice=Self.message(error) } }
+        }
     }
     private func refreshRecords() async {
         guard let db else { return }
@@ -312,6 +338,7 @@ final class Runtime:ObservableObject {
             publishIfChanged(\.outbox, try await db.outbox())
             publishIfChanged(\.approvals, try await db.approvals())
             publishIfChanged(\.paired, try await db.value("owner_chat") != nil)
+            publishIfChanged(\.latencyReport, try await db.latencyReport())
         }
         catch { if !Task.isCancelled { notice=Self.message(error) } }
         do { publishIfChanged(\.pendingNoteWrites, try NotesRecovery.pending(profileHome:profileHome)) }
@@ -399,7 +426,7 @@ final class Runtime:ObservableObject {
         }
     }
     func diagnosticText() -> String {
-        "Indexa\nReceiver: \(receiverStatus)\nHermes: \(hermesStatus)\nMatrix: \(matrixStatus)\nTailscale: \(tailscaleStatus)\n" + tasks.map{"\($0.id) \($0.state) \($0.error ?? "")"}.joined(separator:"\n")
+        "Indexa\nReceiver: \(receiverStatus)\nHermes: \(hermesStatus)\nMatrix: \(matrixStatus)\nTailscale: \(tailscaleStatus)\n" + tasks.map{"\($0.id) \($0.state) \($0.error ?? "")"}.joined(separator:"\n") + "\n\n" + latencyReport
     }
     @discardableResult func shutdown() async -> Bool {
         if let stopTask { return await stopTask.value }
@@ -412,7 +439,7 @@ final class Runtime:ObservableObject {
     private func drain() async -> Bool {
         await stopMCP()
         ready=false;matrixConnected=false;hermesConnected=false;matrixQRAvailable=false
-        let pending=loops;loops.removeAll()
+        let pending=loops+[deliveryTask].compactMap{$0};loops.removeAll()
         pending.forEach { $0.cancel() }
         for task in pending { await task.value }
         if typingState { _ = try? await matrix?.call("typing",["typing":false]) }

@@ -32,6 +32,9 @@ struct WorkerTests {
         #expect(try await db.tasks().allSatisfy{$0.state == "completed"})
         #expect(try await db.outbox().count == 3)
         #expect(try await db.tasks().allSatisfy{$0.output == "Zapisano syntetyczny wynik" && $0.deliveryState == "pending"})
+        let timings=try await db.latencyReport()
+        for stage in ["preparation","submission","hermes","answer_lookup"] { #expect(timings.contains("stage=\(stage) ")) }
+        #expect(!timings.contains("Zapisano syntetyczny wynik"))
         await server.http.server.shared.shutdown()
         try await server.asyncShutdown()
     }
@@ -58,6 +61,8 @@ struct WorkerTests {
         #expect(retry.state == "retry_wait")
         #expect(retry.nextAttempt > Date().timeIntervalSince1970)
         #expect(retry.attempts == 1)
+        let timings=try await db.latencyReport()
+        #expect(timings.contains("stage=delivery ") && timings.contains("status=503"))
         await server.http.server.shared.shutdown()
         try await server.asyncShutdown()
     }

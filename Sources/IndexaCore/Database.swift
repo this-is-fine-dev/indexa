@@ -20,6 +20,14 @@ public struct ApprovalRecord: Identifiable, Sendable, Equatable {
     public let expires: Double
 }
 
+public enum LatencyStage: String, Sendable {
+    case received, preparation, submission, hermes, delivery, history
+    case upstreamAge = "upstream_age"
+    case answerLookup = "answer_lookup"
+    case statusPoll = "status_poll"
+    case transcriptDelivery = "transcript_delivery"
+}
+
 public actor Database {
     private let db: OpaquePointer
     private let exportsDirectory: URL
@@ -92,6 +100,14 @@ public actor Database {
         if !hasDeliveryLink {
             guard sqlite3_exec(db,"ALTER TABLE tasks ADD COLUMN delivery_event TEXT; INSERT OR IGNORE INTO schema_migrations VALUES(4)",nil,nil,nil) == SQLITE_OK else { sqlite3_close(db);throw IndexaError("database_migration") }
         }
+        // Diagnostics are optional: their migration must not prevent task processing.
+        sqlite3_exec(db, """
+        CREATE TABLE IF NOT EXISTS latency_events(id INTEGER PRIMARY KEY,event_id TEXT NOT NULL,stage TEXT NOT NULL,timestamp REAL NOT NULL,seconds REAL,status INTEGER);
+        CREATE INDEX IF NOT EXISTS latency_timestamp ON latency_events(timestamp);
+        CREATE INDEX IF NOT EXISTS latency_event ON latency_events(event_id);
+        CREATE INDEX IF NOT EXISTS tasks_delivery_event ON tasks(delivery_event);
+        INSERT OR IGNORE INTO schema_migrations VALUES(5);
+        """, nil, nil, nil)
         // Old command tombstones have no timestamp; retain them for one complete metadata window.
         sqlite3_exec(db, "INSERT OR IGNORE INTO command_receipts SELECT substr(key,16),strftime('%s','now') FROM meta WHERE key LIKE 'matrix-command:%'", nil, nil, nil)
     }
@@ -122,6 +138,41 @@ public actor Database {
         do { let value = try body(); _ = try query("COMMIT"); return value }
         catch { _ = try? query("ROLLBACK"); throw error }
     }
+    private static func latencyKey(_ event:String) -> String { "sha256:" + PebbleAuthentication.digest(Data(event.utf8)) }
+
+    private func pruneLatency(now:Double = Date().timeIntervalSince1970) throws {
+        _ = try query("DELETE FROM latency_events WHERE timestamp < ?",[String(now-7*86400)])
+        _ = try query("DELETE FROM latency_events WHERE id <= (SELECT MAX(id)-10000 FROM latency_events)")
+    }
+
+    public func recordLatency(event:String,stage:LatencyStage,seconds:Double? = nil,status:Int? = nil) {
+        guard !event.isEmpty,event.utf8.count <= 1024 else { return }
+        // Telemetry never waits behind another SQLite writer or surfaces errors to a task.
+        sqlite3_busy_timeout(db,0)
+        defer { sqlite3_busy_timeout(db,5000) }
+        do {
+            let linked = try query("SELECT event_id FROM tasks WHERE event_id=? OR delivery_event=? LIMIT 1",[event,event]).first?["event_id"]
+            let duration = seconds.flatMap { $0.isFinite && abs($0) <= Double.greatestFiniteMagnitude/1000 && ($0 >= 0 || stage == .upstreamAge) ? String($0) : nil }
+            _ = try query("INSERT INTO latency_events(event_id,stage,timestamp,seconds,status) VALUES(?,?,?,?,?)",[linked ?? Self.latencyKey(event),stage.rawValue,String(Date().timeIntervalSince1970),duration,status.map(String.init)])
+            try pruneLatency()
+        } catch { /* Diagnostics cannot fail the operation being measured. */ }
+    }
+
+    public func latencyReport() throws -> String {
+        try pruneLatency()
+        let rows = try query("SELECT l.*,e.source FROM latency_events l LEFT JOIN inbound_events e ON e.id=l.event_id ORDER BY l.id DESC LIMIT 200")
+        let formatter=ISO8601DateFormatter()
+        formatter.formatOptions=[.withInternetDateTime,.withFractionalSeconds]
+        var lines=["Latency: last 200 records; retained at most 7 days / 10000 records.","upstream_age = received minus upstream timestamp; not network latency. Times below are milliseconds."]
+        for row in rows.reversed() {
+            guard let timestamp=row["timestamp"].flatMap(Double.init),let event=row["event_id"],let stage=row["stage"],LatencyStage(rawValue:stage) != nil else { continue }
+            let source=["pebble","matrix"].contains(row["source"] ?? "") ? row["source"]! : "unknown"
+            let milliseconds=row["seconds"].flatMap(Double.init).map { String(format:"%.3f",locale:Locale(identifier:"en_US_POSIX"),$0*1000) } ?? "-"
+            lines.append("\(formatter.string(from:Date(timeIntervalSince1970:timestamp))) source=\(source) event=\(event) stage=\(stage) ms=\(milliseconds) status=\(row["status"] ?? "-")")
+        }
+        return lines.joined(separator:"\n")
+    }
+
     public func value(_ key: String) throws -> String? { try query("SELECT value FROM meta WHERE key=?",[key]).first?["value"] }
     public func setValue(_ key: String, _ value: String) throws { _ = try query("INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[key,value]) }
 
@@ -177,7 +228,11 @@ public actor Database {
         }
         let id = UUID().uuidString, session = try conversation(), now = String(Date().timeIntervalSince1970)
         _ = try query("INSERT INTO inbound_events VALUES(?,?,?,?,?,?,?,?,?)",[id,source,sourceID,String(recorded),now,text,digest,session,isTest ? "test" : "queued"])
-        if !isTest { _ = try query("INSERT INTO tasks(event_id,hermes_session_id,idempotency_key,state,updated_at) VALUES(?,?,?,'queued',?)", [id,session,id,now]) }
+        if !isTest {
+            _ = try query("INSERT INTO tasks(event_id,hermes_session_id,idempotency_key,state,updated_at) VALUES(?,?,?,'queued',?)", [id,session,id,now])
+            recordLatency(event:id,stage:.received)
+            recordLatency(event:id,stage:.upstreamAge,seconds:Double(now)!-recorded)
+        }
         if let owner = try value("owner_chat") { try enqueuePebbleTranscript(event:id,destination:owner) }
         return Accepted(id:id,duplicate:false)
     }
@@ -267,6 +322,8 @@ public actor Database {
     public func finish(_ id: String, state: String, result: String, destination: String, code: String? = nil, deliveryEvent:String? = nil) throws {
         try transaction {
             _ = try query("UPDATE tasks SET state=?,terminal_error_code=?,updated_at=?,output=?,delivery_event=? WHERE event_id=?",[state,code,String(Date().timeIntervalSince1970),result,deliveryEvent,id])
+            // A mirrored answer can be sent before finish() links it to this task.
+            if let deliveryEvent { _ = try? query("UPDATE latency_events SET event_id=? WHERE event_id=?",[id,Self.latencyKey(deliveryEvent)]) }
             _ = try query("UPDATE inbound_events SET status=? WHERE id=?",[state,id])
             _ = try query("UPDATE approvals SET state='closed' WHERE event_id=? AND state='pending'",[id])
             try enqueue(event:deliveryEvent ?? id,kind:deliveryEvent == nil ? "result" : "shared-answer",destination:destination,body:result)
@@ -339,6 +396,7 @@ public actor Database {
             _ = try query("DELETE FROM tasks WHERE event_id IN (\(terminal))",[String(now-Double(metadataDays)*86400)])
             _ = try query("DELETE FROM inbound_events WHERE received_at < ? AND NOT EXISTS(SELECT 1 FROM tasks WHERE event_id=inbound_events.id)",[String(now-Double(metadataDays)*86400)])
         }
+        try? pruneLatency(now:now)
     }
 }
 

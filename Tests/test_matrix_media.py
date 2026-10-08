@@ -102,6 +102,7 @@ async def check():
         transport.ready, transport.undecrypted, transport.problem = True, set(), ""
         transport.journal = service.Journal(root / "journal.sqlite")
         transport.media_root, transport.send_lock = root, asyncio.Lock()
+        transport.inbox_changed = asyncio.Event()
         room = SimpleNamespace(room_id="!private:test", encrypted=True)
         sent, redacted, receipts = [], [], []
         async def markers(room_id, event_id, **kwargs):

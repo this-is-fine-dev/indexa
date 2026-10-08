@@ -113,6 +113,7 @@ class Transport:
         self.problem = "connecting"
         self.undecrypted = set()
         self.send_lock = asyncio.Lock()
+        self.inbox_changed = asyncio.Event()
 
     async def message(self, room, event):
         if room.room_id != self.config["room_id"] or event.sender != self.config["owner_user"]:
@@ -147,6 +148,7 @@ class Transport:
             except ValueError as error:
                 payload["attachment_error"] = str(error)
         self.journal.accept(payload)
+        self.inbox_changed.set()
 
     async def sync(self):
         first = True
@@ -211,6 +213,12 @@ class Transport:
         return web.json_response({"ready": self.ready, "problem": self.problem, **self.config})
 
     async def events(self, request):
+        self.inbox_changed.clear()
+        if not self.journal.pending():
+            try:
+                await asyncio.wait_for(self.inbox_changed.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                pass
         return web.json_response({"events": self.journal.pending()})
 
     async def ack(self, request):

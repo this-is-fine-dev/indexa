@@ -1,5 +1,15 @@
 # Indexa — decyzje i discovery, 2026-10-07
 
+## Pomiary opóźnień i odbiór Matrix — 2026-10-08, 0.5.8
+
+Lokalny `/events` czeka do 10 s na nowe zdarzenie i wraca od razu po trwałym zapisie odszyfrowanej wiadomości właściciela. To czas maksymalnego oczekiwania pustego odbiornika, nie opóźnienie wiadomości. Zniesiono 2-sekundową przerwę między odbiorami; niegotowa usługa nadal ma przerwę i backoff. Odebrana wiadomość wywołuje obsługę Hermesa od razu. Nowa odpowiedź budzi niezależne zadanie wysyłki, zachowując okresowe ponowienia, FIFO, deduplikację i anulowanie przy wyłączeniu. Oczekiwanie na Matrix nie blokuje pracy Hermesa.
+
+`bridge.sqlite/latency_events` przechowuje znaczniki UTC, skorelowany UUID zadania, etap, czas trwania i kod wyniku. Etapy obejmują przyjęcie, wiek znacznika źródłowego, przygotowanie/submit, czas wykonania raportowany przez Hermesa, powolne lub końcowe sprawdzenia statusu, powolne odczyty historii, dopasowanie odpowiedzi oraz osobno wysyłkę transkrypcji i odpowiedzi. Kod 200 oznacza udany etap; nie zawsze jest oryginalnym kodem HTTP. Czasy lokalnych operacji używają zegara monotonicznego. `upstream_age` jest różnicą zegarów źródła i odbiornika: dla Pebble obejmuje nagranie/transkrypcję, nie sam transfer. Czas Hermesa obejmuje model i narzędzia; potwierdzenie wysyłki Matrix oznacza przyjęcie przez serwer, nie wyświetlenie na iPhonie.
+
+Bez treści, sekretów, argumentów narzędzi, URL-i i odpowiedzi błędów. Nieznane identyfikatory są haszowane; późniejsze powiązanie odpowiedzi Hermesa scala identyfikatory. Limit: 7 dni / 10000 wpisów, eksport w Diagnostyce zawiera ostatnie 200. Zapis metryk nie czeka na blokadę bazy i nie przerywa zadań po błędzie. Nie odtwarzamy fikcyjnych pomiarów dawnych zadań.
+
+Walidacja: test pustego inboxa najpierw odtworzył brak oczekiwania, potem potwierdził natychmiastowe obudzenie, backlog, ACK, timeout i anulowanie. Testy metryk sprawdzają trwałość, korelację, brak treści, limity i awarię/blokadę dziennika. Dotychczasowe 46 testów Swift oraz 3 nowe testy metryk i testy Python transportu/mediów/granic QR zaliczone. Nowe rzeczywiste czasy będą zbierane po instalacji; stare próbki Matrix z wcześniejszej wersji nie są benchmarkiem tego wydania. Bez zmiany modelu, ustawień reasoning, VPN i DNS.
+
 ## Transkrypcje Pebble w Matrixie — 2026-10-08, 0.5.7
 
 Rzeczywiste nagranie Pebble zapisuje teraz wiadomość „🎙️ Z pierścienia” z transkrypcją w tej samej transakcji co przyjęcie zadania. Wykorzystuje istniejący szyfrowany transport bota i trwały outbox: ponowienie webhooka/restart nie dublują wiadomości, a FIFO umieszcza ją przed odpowiedzią. To wiadomość bota oznaczająca polecenie z pierścienia, nie podszywanie się pod konto użytkownika. Testy połączenia i wiadomości przychodzące z Matrixa nie tworzą echa. Dla nagrania odebranego przed sparowaniem pokoju worker dodaje transkrypcję przy podjęciu zadania. Nie odtwarzamy starych zakończonych nagrań.

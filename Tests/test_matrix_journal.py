@@ -58,6 +58,43 @@ async def device_list_check():
 asyncio.run(device_list_check())
 print("PASS: device list uses supported nio trust state")
 
+async def inbox_wakes_on_message_check():
+    from types import SimpleNamespace
+    from nio import RoomMessageText
+    with tempfile.TemporaryDirectory() as directory:
+        config = {"owner_user": "@owner:test", "bot_user": "@indexa:test", "device_id": "BOT", "room_id": "!room:test"}
+        transport = module.Transport(config, Path(directory), credentials)
+        waiting = asyncio.create_task(transport.events(None))
+        try:
+            await asyncio.sleep(0.02)
+            assert not waiting.done(), 'Empty inbox must wait for a message instead of requiring another poll'
+            event = RoomMessageText.from_dict({"type": "m.room.message", "event_id": "$wake", "sender": config["owner_user"],
+                "origin_server_ts": 1000, "content": {"msgtype": "m.text", "body": "synthetic"}})
+            event.decrypted = True
+            await transport.message(SimpleNamespace(room_id=config["room_id"], encrypted=True), event)
+            response = await asyncio.wait_for(waiting, 0.5)
+            assert json.loads(response.body)['events'][0]['id'] == '$wake'
+            # Persisted, unacknowledged backlog returns immediately, including after restart.
+            response = await asyncio.wait_for(transport.events(None), 0.5)
+            assert len(json.loads(response.body)['events']) == 1
+            transport.journal.ack('$wake')
+            waiting = asyncio.create_task(transport.events(None))
+            await asyncio.sleep(0.02)
+            assert not waiting.done(), 'Acknowledged messages must not leave a busy-loop wakeup'
+        finally:
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+            await transport.client.close()
+        from unittest.mock import patch
+        async def expire(awaitable, timeout):
+            assert timeout == 10
+            awaitable.close()
+            raise asyncio.TimeoutError
+        with patch.object(module.asyncio, 'wait_for', expire):
+            assert json.loads((await transport.events(None)).body)['events'] == []
+asyncio.run(inbox_wakes_on_message_check())
+print('PASS: inbox wakes immediately, retains unacknowledged messages and waits after ack')
+
 async def restart_with_unchanged_cursor_check():
     from nio import SyncResponse
     with tempfile.TemporaryDirectory() as directory:
