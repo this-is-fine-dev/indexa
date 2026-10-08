@@ -13,6 +13,7 @@ matrix/indexa-qr
 
 *.log.*
 .sparkle/
+.signing/
 *.pem
 *.p12
 *.key

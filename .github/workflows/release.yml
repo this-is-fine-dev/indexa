@@ -19,6 +19,16 @@ jobs:
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]{1,3}\.[0-9]{1,2}\.[0-9]{1,2}$ ]]
           test -n "$SPARKLE_PRIVATE_KEY"
           echo "INDEXA_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Prepare stable code signing without Keychain
+        env:
+          INDEXA_CODE_SIGNING_KEY: ${{ secrets.INDEXA_CODE_SIGNING_KEY }}
+        run: |
+          test -n "$INDEXA_CODE_SIGNING_KEY"
+          umask 077
+          mkdir -p .signing
+          printf '%s' "$INDEXA_CODE_SIGNING_KEY" > .signing/key.pem
+          python3 scripts/prepare-codesign.py
+          python3 Tests/test_signing.py
       - name: Build native QR helper
         run: cargo build --release --locked --manifest-path matrix/qr/Cargo.toml
       - uses: actions/setup-python@v5
@@ -67,3 +77,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             "dist/Indexa-$INDEXA_VERSION.zip" dist/update/appcast.xml \
             --title "Indexa $INDEXA_VERSION" --notes-file "dist/update/Indexa-$INDEXA_VERSION.md"
+      - name: Remove build signing key
+        if: always()
+        run: rm -f .signing/key.pem

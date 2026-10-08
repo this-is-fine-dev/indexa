@@ -68,3 +68,5 @@ Sparkle 2.9.2 sprawdza podpisane archiwa z GitHub Releases. Publiczny kanał nie
 Procedura wydania, zakres aktualizacji i odzyskiwanie: [docs/RELEASE.md](docs/RELEASE.md).
 
 Aplikacja jest instalowana w `/Applications/Indexa.app`. `python3 scripts/install-app.py` przenosi poprzednią kopię z `~/Applications`, odmawia instalacji podczas aktywnego zadania, sprawdza podpis i uruchamia aplikację. Dane pozostają w katalogu użytkownika. Kolejne wydania publikuj jako GitHub Release z podpisanym `appcast.xml`; samo wypchnięcie kodu nie udostępnia aktualizacji.
+
+Od 0.5.3 budowanie wymaga istniejącego klucza podpisu `.signing/key.pem` (0600) i publicznego certyfikatu z repozytorium. Brak klucza blokuje wydanie, zamiast zmieniać tożsamość aplikacji i tracić zgody macOS. Podpisywanie nie używa Keychain. Szczegóły w [procedurze wydania](docs/RELEASE.md#stała-tożsamość-aplikacji-od-053).

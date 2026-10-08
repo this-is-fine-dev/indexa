@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+test -f "${INDEXA_SIGNING_KEY:-.signing/key.pem}" || { echo 'Missing stable Indexa signing key; ad-hoc release signing is forbidden.' >&2; exit 1; }
+python3 scripts/prepare-codesign.py
 # Release archives never contain the vault, local runtime, Matrix history or signing seed.
 test -x matrix/qr/target/release/indexa-qr || { echo 'Missing native QR binary; run scripts/build-matrix-qr.sh first.' >&2; exit 1; }
 version="${INDEXA_VERSION:-$(cat release/version.txt)}"
@@ -60,7 +62,7 @@ with open('dist/Indexa.app/Contents/Info.plist', 'wb') as file:
     plistlib.dump(plist, file)
 PY
 codesign --force --sign - "$app/Contents/Resources/matrix/indexa-qr"
-codesign --force --deep --sign "${MACOS_SIGN_IDENTITY:--}" --identifier local.fine.indexa "$app"
+python3 scripts/sign-app.py "$app"
 codesign --verify --deep --strict "$app"
 zip="dist/Indexa-$version.zip"
 rm -f "$zip"
