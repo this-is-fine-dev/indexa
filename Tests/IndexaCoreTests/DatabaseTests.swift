@@ -4,6 +4,25 @@ import SQLite3
 @testable import IndexaCore
 
 struct DatabaseTests {
+    @Test func pebbleTranscriptIsQueuedOnReceiptOnceBeforeAnswer() async throws {
+        let db = try Database(url:nil)
+        try await db.setValue("owner_chat","room")
+        let accepted = try await db.accept(source:"pebble",sourceID:"recording",text:"Kiedy mam urlop?",recorded:1,digest:"recording")
+        let echo = try #require(try await db.nextDelivery())
+        #expect(echo.eventID == accepted.id)
+        #expect(echo.kind == "transcript:0")
+        #expect(echo.destination == "room")
+        #expect(echo.body == "🎙️ Z pierścienia\nKiedy mam urlop?")
+        _ = try await db.accept(source:"pebble",sourceID:"recording",text:"Kiedy mam urlop?",recorded:1,digest:"recording")
+        _ = try await db.accept(source:"pebble",sourceID:"test",text:"test",recorded:1,digest:"test",isTest:true)
+        _ = try await db.ingestMatrix(id:"matrix",text:"Cześć",recorded:1)
+        try await db.recover()
+        #expect(try await db.outbox().count == 1)
+        try await db.finish(accepted.id,state:"completed",result:"W listopadzie",destination:"room")
+        #expect(try await db.nextDelivery()?.id == echo.id)
+        try await db.setDelivery(echo.id,state:"delivered")
+        #expect(try await db.nextDelivery()?.body == "W listopadzie")
+    }
     @Test func durableDedupeRecoveryAndAtomicOutbox() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

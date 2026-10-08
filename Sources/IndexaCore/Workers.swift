@@ -12,6 +12,8 @@ public actor AgentWorker {
         busy=true;defer { busy=false }
         guard let task=try await db.nextTask() else { return }
         if task.state == "queued" {
+            // Also covers recordings received before the Matrix room was paired.
+            try await db.enqueuePebbleTranscript(event:task.id,destination:destination)
             guard !paused else { return }
             let capabilities=try await hermes.capabilities()
             guard let features=capabilities["features"] as? [String:Any],features["run_submission"] as? Bool == true,

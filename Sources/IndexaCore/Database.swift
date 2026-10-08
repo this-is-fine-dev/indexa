@@ -178,7 +178,12 @@ public actor Database {
         let id = UUID().uuidString, session = try conversation(), now = String(Date().timeIntervalSince1970)
         _ = try query("INSERT INTO inbound_events VALUES(?,?,?,?,?,?,?,?,?)",[id,source,sourceID,String(recorded),now,text,digest,session,isTest ? "test" : "queued"])
         if !isTest { _ = try query("INSERT INTO tasks(event_id,hermes_session_id,idempotency_key,state,updated_at) VALUES(?,?,?,'queued',?)", [id,session,id,now]) }
+        if let owner = try value("owner_chat") { try enqueuePebbleTranscript(event:id,destination:owner) }
         return Accepted(id:id,duplicate:false)
+    }
+    public func enqueuePebbleTranscript(event:String,destination:String) throws {
+        guard let text = try query("SELECT e.transcript FROM inbound_events e JOIN tasks t ON t.event_id=e.id WHERE e.id=? AND e.source='pebble'",[event]).first?["transcript"], !text.isEmpty else { return }
+        try enqueue(event:event,kind:"transcript",destination:destination,body:"🎙️ Z pierścienia\n\(text)")
     }
     public func accept(source: String, sourceID: String, text: String, recorded: Double, digest: String, isTest: Bool = false) throws -> Accepted {
         try transaction { try acceptInside(source:source,sourceID:sourceID,text:text,recorded:recorded,digest:digest,isTest:isTest) }

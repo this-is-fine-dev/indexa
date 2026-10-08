@@ -1,5 +1,11 @@
 # Indexa — decyzje i discovery, 2026-10-07
 
+## Transkrypcje Pebble w Matrixie — 2026-10-08, 0.5.7
+
+Rzeczywiste nagranie Pebble zapisuje teraz wiadomość „🎙️ Z pierścienia” z transkrypcją w tej samej transakcji co przyjęcie zadania. Wykorzystuje istniejący szyfrowany transport bota i trwały outbox: ponowienie webhooka/restart nie dublują wiadomości, a FIFO umieszcza ją przed odpowiedzią. To wiadomość bota oznaczająca polecenie z pierścienia, nie podszywanie się pod konto użytkownika. Testy połączenia i wiadomości przychodzące z Matrixa nie tworzą echa. Dla nagrania odebranego przed sparowaniem pokoju worker dodaje transkrypcję przy podjęciu zadania. Nie odtwarzamy starych zakończonych nagrań.
+
+Pomiar ostatniego rzeczywistego nagrania: recorded_at → received_at 12,252 s (obejmuje nagranie i przetwarzanie po stronie Pebble), odbiór → przekazanie do Hermesa 0,603 s, przekazanie → zakończenie 10,227 s. To pojedynczy pomiar, nie benchmark. Skrócono odstęp sprawdzania Hermesa i wysyłki z 2 do 1 s; model i jego ustawienia pozostają bez zmian. Testy odtworzyły brak echa, następnie sprawdziły treść, kolejność, brak duplikatów po restarcie i wykluczenie testów/Matrixa. 46 testów Swift zaliczonych (opcjonalny SDK pominięty).
+
 ## Pebble Hold & Talk — 2026-10-08, 0.5.6
 
 Odbiornik odrzucał podpisane `single-click-hold` kodem 422 `unsupported_trigger`, choć weryfikacja podpisu obsługiwała ten gest. Test połączenia (`test-event`) przechodził, co maskowało błąd. Screen użytkownika z Recent runs potwierdził 422 dla nagrań i 202 dla testów. Ingress akceptuje teraz oba gesty nagrania; zachowane są podpisy, rozróżnienie testów i deduplikacja. Instrukcja w aplikacji opisuje osobną konfigurację każdego gestu.

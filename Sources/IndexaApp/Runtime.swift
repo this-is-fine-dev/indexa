@@ -125,8 +125,8 @@ final class Runtime:ObservableObject {
             ready=true
             // Each service has its own loop: a Matrix outage cannot stall Hermes or the dashboard.
             loops.append(poll(every:2) { await self.pollMatrix() })
-            loops.append(poll(every:2) { await self.pollHermes(hermes) })
-            loops.append(poll(every:2) {
+            loops.append(poll(every:1) { await self.pollHermes(hermes) })
+            loops.append(poll(every:1) {
                 do { try await self.outboxWorker?.tick() } catch { if !Task.isCancelled { self.notice=Self.message(error) } }
             })
             loops.append(poll(every:2) { await self.refreshRecords();await self.refreshMCP() })
