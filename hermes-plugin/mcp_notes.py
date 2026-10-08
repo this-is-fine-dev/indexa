@@ -9,7 +9,10 @@ from __init__ import handle_core
 
 def main():
     try:
-        os.setsid()
+        # Foundation Process already creates a private process group on macOS.
+        # Calling setsid() as its leader fails with EPERM before handling input.
+        if os.getpgrp() != os.getpid():
+            os.setsid()
         raw = sys.stdin.buffer.read(65537)
         if len(raw) > 65536 or len(sys.argv) != 2:
             raise ValueError('invalid_request')
