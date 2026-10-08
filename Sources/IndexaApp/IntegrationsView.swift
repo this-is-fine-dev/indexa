@@ -28,7 +28,8 @@ struct IntegrationsView: View {
                     Text("Włączenie zapisu pozwala wykonywać polecenia agenta bez osobnego pytania przy każdej notatce. Wyłączenie blokuje nowe operacje; rozpoczęty zapis może się dokończyć.").font(.caption).foregroundStyle(.secondary)
                     LabeledContent("Dostępne narzędzia", value: String(module.enabled ? module.permissions.count : 0))
                     if module.enabled {
-                        ForEach([("read", "notes_get"), ("create", "notes_create"), ("append", "notes_append")].filter { module.permissions.contains($0.0) }, id: \.0) { tool in
+                        // Form flattens both loops: tool IDs must differ from permission IDs.
+                        ForEach([("read", "notes_get"), ("create", "notes_create"), ("append", "notes_append")].filter { module.permissions.contains($0.0) }, id: \.1) { tool in
                             Text(tool.1).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                         }
                     }
