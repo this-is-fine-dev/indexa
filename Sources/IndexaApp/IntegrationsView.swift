@@ -38,41 +38,107 @@ struct IntegrationsView: View {
                                 Image(systemName: entry.result == "ok" ? "checkmark.circle" : "exclamationmark.circle")
                                     .foregroundStyle(entry.result == "ok" ? Color.green : Color.orange)
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(entry.tool).font(.callout.monospaced())
+                                    Text(entry.tool).font(.callout.monospaced()).textSelection(.enabled)
                                     Text(entry.diagnostic ?? (entry.result == "ok" ? "Wykonano" : entry.result == "denied" ? "Zablokowano przez uprawnienia" : "Operacja nie powiodła się"))
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Text(entry.date, style: .time).font(.caption).foregroundStyle(.secondary)
+                                Text(entry.date, style: .time).font(.caption).foregroundStyle(.secondary).fixedSize()
                             }
                         }
-                    }.padding(.top, 10)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(18)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
                 DisclosureGroup("Ustawienia zaawansowane MCP") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(runtime.mcpStatus).font(.caption).foregroundStyle(.secondary)
-                        Label(runtime.mcpHermesStatus, systemImage: "link").font(.callout)
-                        HStack {
-                            Button("Ponów połączenie z Hermesem") { Task { await runtime.connectMCPToHermes() } }
-                            Button("Zmień token…") { confirmRotation = true }
-                        }.disabled(runtime.mcpManager == nil || runtime.mcpConnecting || runtime.mcpRotating)
-                        Button("Kopiuj konfigurację dla innego klienta") { runtime.copyMCPConfiguration() }
-                            .disabled(runtime.mcpManager == nil)
-                        Text("Token trafia do schowka na minutę. Hermes otrzymuje go automatycznie.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(.top, 10)
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .top, spacing: 8) {
+                                if runtime.mcpConnecting {
+                                    ProgressView().controlSize(.small).accessibilityLabel("Łączenie z Hermesem")
+                                } else {
+                                    Image(systemName: runtime.mcpHermesConnected ? "checkmark.circle.fill" : "exclamationmark.circle")
+                                        .foregroundStyle(runtime.mcpHermesConnected ? Color.green : Color.orange)
+                                }
+                                Text(runtime.mcpHermesStatus).font(.callout)
+                            }
+                            Text(runtime.mcpStatus).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Divider()
+                        VStack(alignment: .leading, spacing: 6) {
+                            Button(runtime.mcpConnecting ? "Łączenie z Hermesem…" : "Ponów połączenie") {
+                                Task { await runtime.connectMCPToHermes() }
+                            }.disabled(runtime.mcpManager == nil || runtime.mcpConnecting || runtime.mcpRotating)
+                            Text("Indexa łączy narzędzia automatycznie. Ponów, jeśli Hermes ich nie widzi.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Button("Kopiuj konfigurację") { runtime.copyMCPConfiguration() }
+                                .disabled(runtime.mcpManager == nil || runtime.mcpRotating)
+                            Text("Tylko dla innego klienta MCP. Zawiera token dostępu; schowek wyczyści się po minucie. Hermes nie wymaga kopiowania.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Divider()
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                Button(runtime.mcpRotating ? "Zmienianie tokena…" : "Zmień token dostępu…") { confirmRotation = true }
+                                    .disabled(runtime.mcpManager == nil || runtime.mcpConnecting || runtime.mcpRotating)
+                                if runtime.mcpRotating { ProgressView().controlSize(.small) }
+                            }
+                            Text("Unieważnia poprzedni token. Indexa połączy Hermesa ponownie; konfigurację innych klientów trzeba zmienić ręcznie.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .foregroundStyle(.secondary)
+                .padding(18)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
             }.padding(24).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
         }
+        .disclosureGroupStyle(IntegrationDisclosureStyle())
         .confirmationDialog("Zmienić token MCP?", isPresented: $confirmRotation) {
             Button("Zmień token") { Task { await runtime.rotateMCPToken() } }
         } message: { Text("Bieżące połączenia zostaną zamknięte. Poprzedni token przestanie działać, a Indexa automatycznie przekaże nowy Hermesowi.") }
     }
 }
 
+private struct IntegrationDisclosureStyle: DisclosureGroupStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: DisclosureGroupStyleConfiguration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+                    configuration.isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    configuration.label.font(.callout.weight(.medium))
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary).rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(configuration.isExpanded ? "Rozwinięte" : "Zwinięte")
+            .accessibilityHint(configuration.isExpanded ? "Zwiń szczegóły" : "Pokaż szczegóły")
+            if configuration.isExpanded {
+                Divider().padding(.vertical, 10)
+                configuration.content.frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct MCPModuleCard: View {
     @ObservedObject var runtime: Runtime
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let module: MCPModuleState
     @State private var expanded = false
     private var latest: MCPAuditEntry? { runtime.mcpActivity.first { $0.module == module.id } }
@@ -107,11 +173,20 @@ private struct MCPModuleCard: View {
                     .frame(width: 44, height: 44).background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 5) {
                     Text(module.title).font(.headline)
-                    Label(status.0, systemImage: status.1).font(.caption).foregroundStyle(status.2)
+                    HStack(alignment: .top, spacing: 6) {
+                        if module.enabled && runtime.mcpConnecting {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: status.1)
+                        }
+                        Text(status.0).fixedSize(horizontal: false, vertical: true)
+                    }.font(.caption).foregroundStyle(status.2)
                 }
                 Spacer(minLength: 12)
                 Toggle("Udostępnij \(module.title) Hermesowi", isOn: Binding(get: { module.enabled }, set: { enabled in
-                    if enabled && module.permissions.isEmpty { expanded = true }
+                    if enabled && module.permissions.isEmpty {
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { expanded = true }
+                    }
                     Task { await runtime.setMCPEnabled(enabled, module: module.id) }
                 })).labelsHidden().toggleStyle(.switch).disabled(runtime.mcpManager == nil)
             }
@@ -136,9 +211,9 @@ private struct MCPModuleCard: View {
                         NSPasteboard.general.setString("http://127.0.0.1:43121/mcp/" + module.id, forType: .string)
                         runtime.mcpNotice = "Skopiowano adres \(module.title). Hermes nie wymaga ręcznej konfiguracji."
                     }
-                }.padding(.top, 12)
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }.font(.callout)
-        }.padding(18)
+        }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
     }
@@ -149,11 +224,13 @@ private struct OrganizerAccessView: View {
     let module: MCPModuleState
     var body: some View {
         if runtime.organizerIssues[module.id] != nil {
-            HStack {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Najpierw zezwól Indexie na dostęp w macOS.").font(.callout)
-                Spacer()
-                Button("Zezwól na dostęp…") { Task { await runtime.requestOrganizerAccess(module.id) } }
-                    .disabled(runtime.organizerRequesting || runtime.organizerStore == nil)
+                HStack(spacing: 8) {
+                    Button("Zezwól na dostęp…") { Task { await runtime.requestOrganizerAccess(module.id) } }
+                        .disabled(runtime.organizerRequesting || runtime.organizerStore == nil)
+                    if runtime.organizerRequesting { ProgressView().controlSize(.small) }
+                }
             }
             Text("macOS prosi o pełny dostęp dla aplikacji. Narzędzia Hermesa ograniczają osobne przełączniki poniżej.")
                 .font(.caption).foregroundStyle(.secondary)

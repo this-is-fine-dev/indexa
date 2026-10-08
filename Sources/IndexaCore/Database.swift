@@ -8,14 +8,14 @@ public struct TaskRecord: Identifiable, Equatable, Sendable {
     public let created: Double
     public var attachments: [Attachment] = []
 }
-public struct OutboxItem: Identifiable, Sendable {
+public struct OutboxItem: Identifiable, Sendable, Equatable {
     public let id, eventID, kind, destination, body, state: String
     public let attempts: Int
     public let nextAttempt: Double
     public let markup: String?
 }
 public struct Accepted: Sendable { public let id: String; public let duplicate: Bool }
-public struct ApprovalRecord: Identifiable, Sendable {
+public struct ApprovalRecord: Identifiable, Sendable, Equatable {
     public let id, requestID, runID, eventID, description, state: String
     public let expires: Double
 }

@@ -13,7 +13,8 @@ let package = Package(
         .target(name: "IndexaCore", dependencies: [.product(name: "Vapor", package: "vapor")]),
         .executableTarget(name: "IndexaApp", dependencies: ["IndexaCore", .product(name: "Sparkle", package: "Sparkle")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
-        .testTarget(name: "IndexaCoreTests", dependencies: ["IndexaCore", .product(name: "VaporTesting", package: "vapor")])
+        .testTarget(name: "IndexaCoreTests", dependencies: ["IndexaCore", .product(name: "VaporTesting", package: "vapor")]),
+        .testTarget(name: "IndexaAppTests", dependencies: ["IndexaApp"])
     ],
     swiftLanguageModes: [.v5]
 )

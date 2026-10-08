@@ -53,14 +53,14 @@ public protocol MCPModule: Sendable {
     func tools() async throws -> [MCPTool]
     func call(tool: String, arguments: MCPValue) async throws -> MCPToolResult
 }
-public struct MCPModuleState: Sendable, Identifiable {
+public struct MCPModuleState: Sendable, Identifiable, Equatable {
     public let id: String
     public let title: String
     public let enabled: Bool
     public let permissions: Set<String>
     public let availablePermissions: Set<String>
 }
-public struct MCPAuditEntry: Sendable, Identifiable {
+public struct MCPAuditEntry: Sendable, Identifiable, Equatable {
     public let id: UUID
     public let date: Date
     public let module: String

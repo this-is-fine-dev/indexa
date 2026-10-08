@@ -65,11 +65,11 @@ extension Runtime {
 
     func refreshMCP() async {
         guard let manager = mcpManager else { return }
-        mcpModules = await manager.snapshots()
-        mcpActivity = await manager.auditEntries()
-        organizerIssues = Dictionary(uniqueKeysWithValues: OrganizerKind.allCases.compactMap { kind in
+        publishIfChanged(\.mcpModules, await manager.snapshots())
+        publishIfChanged(\.mcpActivity, await manager.auditEntries())
+        publishIfChanged(\.organizerIssues, Dictionary(uniqueKeysWithValues: OrganizerKind.allCases.compactMap { kind in
             organizerStore?.accessIssue(kind).map { (kind.rawValue, $0) }
-        })
+        }))
     }
 
     func organizerScopeDescription(_ module: String) -> String {

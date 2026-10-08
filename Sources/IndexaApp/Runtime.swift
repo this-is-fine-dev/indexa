@@ -267,6 +267,10 @@ final class Runtime:ObservableObject {
             }
         }
     }
+    // @Published emits even for equal values; polling must not invalidate the whole window at idle.
+    func publishIfChanged<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<Runtime, Value>, _ value: Value) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+    }
     private func pollMatrix() async {
         guard let db,let matrix else { return }
         do {
@@ -274,11 +278,12 @@ final class Runtime:ObservableObject {
             guard !Task.isCancelled else { return }
             guard let room=health["room_id"] as? String,let owner=health["owner_user"] as? String,let bot=health["bot_user"] as? String else { throw IndexaError("matrix_identity_missing") }
             try await db.bindMatrix(room:room,user:owner,bot:bot)
-            matrixHomeserver=health["homeserver"] as? String ?? "";matrixOwner=owner
-            matrixQRAvailable=health["qr_enabled"] as? Bool == true
+            publishIfChanged(\.matrixHomeserver, health["homeserver"] as? String ?? "")
+            publishIfChanged(\.matrixOwner, owner)
+            publishIfChanged(\.matrixQRAvailable, health["qr_enabled"] as? Bool == true)
             matrixFailures=0
-            matrixConnected=health["ready"] as? Bool == true
-            matrixStatus=matrixConnected ? "Połączony · E2EE" : "Oczekiwanie: \(health["problem"] as? String ?? "sync")"
+            publishIfChanged(\.matrixConnected, health["ready"] as? Bool == true)
+            publishIfChanged(\.matrixStatus, matrixConnected ? "Połączony · E2EE" : "Oczekiwanie: \(health["problem"] as? String ?? "sync")")
             if matrixConnected { try await receiver?.poll() }
         } catch { if !Task.isCancelled { matrixConnected=false;matrixQRAvailable=false;matrixStatus="Brak połączenia: \(Self.message(error))";matrixFailures=min(matrixFailures+1,4);try? await Task.sleep(nanoseconds:UInt64(1 << matrixFailures)*1_000_000_000) } }
     }
@@ -289,8 +294,8 @@ final class Runtime:ObservableObject {
             guard !Task.isCancelled else { return }
             let features=caps["features"] as? [String:Any] ?? [:]
             hermesFailures=0
-            hermesConnected=features["run_submission"] as? Bool == true
-            hermesStatus=hermesConnected ? "API gotowe" : "API nie obsługuje zadań"
+            publishIfChanged(\.hermesConnected, features["run_submission"] as? Bool == true)
+            publishIfChanged(\.hermesStatus, hermesConnected ? "API gotowe" : "API nie obsługuje zadań")
             if hermesConnected,let owner=try await db.value("owner_chat") {
                 do { try await sharedConversation?.tick(destination:owner) }
                 catch { notice="Nie udało się odświeżyć historii rozmowy. Spróbuję ponownie." }
@@ -301,9 +306,14 @@ final class Runtime:ObservableObject {
     }
     private func refreshRecords() async {
         guard let db else { return }
-        do { tasks=try await db.tasks();outbox=try await db.outbox();approvals=try await db.approvals();paired=try await db.value("owner_chat") != nil }
+        do {
+            publishIfChanged(\.tasks, try await db.tasks())
+            publishIfChanged(\.outbox, try await db.outbox())
+            publishIfChanged(\.approvals, try await db.approvals())
+            publishIfChanged(\.paired, try await db.value("owner_chat") != nil)
+        }
         catch { if !Task.isCancelled { notice=Self.message(error) } }
-        do { pendingNoteWrites=try NotesRecovery.pending(profileHome:profileHome) }
+        do { publishIfChanged(\.pendingNoteWrites, try NotesRecovery.pending(profileHome:profileHome)) }
         catch { if (error as? IndexaError)?.code != "notes_write_in_progress",!Task.isCancelled { notice=Self.message(error) } }
     }
     private func refreshMatrixFeedback() async {
@@ -352,7 +362,13 @@ final class Runtime:ObservableObject {
         catch { notice=Self.message(error) }
     }
     func refreshTailscale() async {
-        do { let snapshot=try await tailscale.snapshot(port:config.port);tailscaleConnected=snapshot.online;serveEnabled=snapshot.serve;webhookURL=snapshot.webhookURL;tailscaleStatus=snapshot.online ? (snapshot.funnel ? "UWAGA: odbiornik publiczny przez Funnel" : (snapshot.serve ? "Prywatny Serve skonfigurowany":"Online · Serve wyłączony")) : snapshot.state }
+        do {
+            let snapshot=try await tailscale.snapshot(port:config.port)
+            publishIfChanged(\.tailscaleConnected, snapshot.online)
+            publishIfChanged(\.serveEnabled, snapshot.serve)
+            publishIfChanged(\.webhookURL, snapshot.webhookURL)
+            publishIfChanged(\.tailscaleStatus, snapshot.online ? (snapshot.funnel ? "UWAGA: odbiornik publiczny przez Funnel" : (snapshot.serve ? "Prywatny Serve skonfigurowany":"Online · Serve wyłączony")) : snapshot.state)
+        }
         catch { tailscaleConnected=false;tailscaleStatus="Niedostępny: \(Self.message(error))";serveEnabled=false }
     }
     func setServe(_ enabled:Bool) async {
