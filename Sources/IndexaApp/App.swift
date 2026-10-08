@@ -8,24 +8,18 @@ struct IndexaApp: App {
     @StateObject private var runtime=Runtime.shared
     var body: some Scene {
         MenuBarExtra("Indexa · \(runtime.summary)", systemImage: runtime.statusSymbol) { MenuView(runtime:runtime) }
-        Window("Indexa",id:"indexa") { Dashboard(runtime:runtime).frame(minWidth:720,minHeight:580) }
-            .defaultSize(width:800,height:660)
-        Settings { SettingsView(runtime:runtime).frame(width:650,height:590) }
+            .commands {
+                CommandGroup(replacing: .appSettings) {
+                    Button("Ustawienia…") { AppWindow.shared.show(.settings) }.keyboardShortcut(",")
+                }
+            }
     }
 }
 
 @MainActor final class AppDelegate:NSObject,NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification:Notification) { NSApp.setActivationPolicy(.accessory);Updater.shared.start();Task { await Runtime.shared.start() } }
-    private var fallbackWindow:NSWindow?
     func applicationShouldHandleReopen(_ sender:NSApplication,hasVisibleWindows flag:Bool) -> Bool {
-        if let window=sender.windows.first(where:{$0.title == "Indexa"}) {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            let window=NSWindow(contentViewController:NSHostingController(rootView:Dashboard(runtime:.shared).frame(minWidth:720,minHeight:580)))
-            window.title="Indexa";window.setContentSize(NSSize(width:800,height:660));window.isReleasedWhenClosed=false
-            window.center();window.makeKeyAndOrderFront(nil);fallbackWindow=window
-        }
-        sender.activate(ignoringOtherApps:true)
+        AppWindow.shared.show()
         return true
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication) -> Bool { false }

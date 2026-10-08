@@ -4,13 +4,12 @@ import IndexaCore
 
 struct MenuView:View {
     @ObservedObject var runtime:Runtime
-    @Environment(\.openWindow) var openWindow
     @State private var confirmReconnect=false
     var body:some View {
         Text("Indexa").font(.headline)
         Text(runtime.summary)
-        Button("Otwórz Indexa") { openWindow(id:"indexa");NSApp.activate(ignoringOtherApps:true) }.keyboardShortcut("o")
-        SettingsLink { Text("Ustawienia…") }
+        Button("Otwórz Indexa") { AppWindow.shared.show() }.keyboardShortcut("o")
+        Button("Ustawienia…") { AppWindow.shared.show(.settings) }
         Divider()
         Button(runtime.paused ? "Wznów zadania":"Wstrzymaj nowe zadania") { Task { await runtime.togglePause() } }
         Button("Połącz ponownie…") { confirmReconnect=true }.disabled(runtime.restarting)
@@ -23,12 +22,36 @@ struct MenuView:View {
     }
 }
 
+struct MainView:View {
+    @ObservedObject var runtime:Runtime
+    @ObservedObject private var navigation=AppWindow.shared
+    var body:some View {
+        VStack(spacing:0) {
+            HStack(spacing:6) {
+                ForEach(AppPage.allCases,id:\.self) { page in
+                    Button { navigation.page=page } label: {
+                        Label(page.title,systemImage:page.symbol)
+                            .padding(.horizontal,10).padding(.vertical,8)
+                            .background(navigation.page == page ? Color.accentColor.opacity(0.15):.clear,in:RoundedRectangle(cornerRadius:7))
+                    }.buttonStyle(.plain).accessibilityAddTraits(navigation.page == page ? [.isSelected]:[])
+                }
+                Spacer(minLength:0)
+            }.padding(12)
+            Divider()
+            Group {
+                if navigation.page == .dashboard { Dashboard(runtime:runtime) }
+                else if navigation.page == .diagnostics { DiagnosticsView(runtime:runtime) }
+                else { SettingsView(runtime:runtime,page:navigation.page) }
+            }.frame(maxWidth:.infinity,maxHeight:.infinity)
+        }.frame(minWidth:800,minHeight:650)
+    }
+}
+
 struct Dashboard:View {
     @ObservedObject var runtime:Runtime
     @State private var selected:TaskRecord?
     @State private var review:TaskRecord?
     @State private var delivery:OutboxItem?
-    @State private var diagnostics=false
     @State private var noteReview=[String]()
     @State private var confirmNotes=false
     @State private var vaultPassphrase=""
@@ -37,7 +60,7 @@ struct Dashboard:View {
             HStack {
                 Image(systemName:"waveform.circle.fill").font(.largeTitle).foregroundStyle(.teal)
                 VStack(alignment:.leading) { Text("Indexa").font(.largeTitle.bold());Text("Od pomysłu do zapisanej notatki").foregroundStyle(.secondary) }
-                Spacer();SettingsLink { Label("Ustawienia",systemImage:"gear") }
+                Spacer()
             }
             Label(runtime.summary,systemImage:runtime.statusSymbol).font(.title2)
             HStack(spacing:20) {
@@ -62,8 +85,11 @@ struct Dashboard:View {
             HStack {
                 Button(runtime.paused ? "Wznów":"Wstrzymaj") { Task { await runtime.togglePause() } }.disabled(!runtime.ready)
                 Button("Zatrzymaj zadanie") { Task { await runtime.cancelActive() } }.disabled(!runtime.hasActiveTask)
-                Spacer();Button("Diagnostyka") { diagnostics=true }
+                Spacer()
             }
+            if let selected {
+                taskDetails(runtime.tasks.first(where:{$0.id == selected.id}) ?? selected)
+            } else {
             List {
                 if !runtime.pendingNoteWrites.isEmpty {
                     Section("Notatki wymagające sprawdzenia") {
@@ -106,12 +132,26 @@ struct Dashboard:View {
                     }
                 }
             }
+            }
             Text("Mac musi być włączony i dostępny. Uśpienie przerywa odbiór; powiadomienia wymagają zgody iOS.").font(.caption).foregroundStyle(.secondary)
         }.padding(24)
         .onDisappear { vaultPassphrase="" }
-        .sheet(item:$selected) { task in
+        .confirmationDialog("Zamknąć sprawdzone operacje notatek?",isPresented:$confirmNotes) {
+            Button("Potwierdzam sprawdzenie") { runtime.resolveNotes(noteReview);noteReview=[] }
+        } message: { Text("Potwierdzasz sprawdzenie \(noteReview.count) operacji w folderze Indexa w Notatkach. Odblokujemy kolejne zapisy; żadna z tych operacji nie zostanie powtórzona. Zadania wymagające sprawdzenia zamknij po sprawdzeniu także ich pozostałych skutków.") }
+        .confirmationDialog("Potwierdzasz ręczne sprawdzenie skutków zadania?",isPresented:Binding(get:{review != nil},set:{if !$0 { review=nil }})) {
+            Button("Zamknij bez ponawiania") { if let task=review { Task { await runtime.resolve(task) } };review=nil }
+        } message: { Text("Najpierw sprawdź dokładną notatkę i status Hermesa. Nie uruchomimy ponownie tego zadania.") }
+        .confirmationDialog("Ponowić wiadomość?",isPresented:Binding(get:{delivery != nil},set:{if !$0 { delivery=nil }})) {
+            Button("Ponów wysyłkę") { if let item=delivery { Task { await runtime.retry(item) } };delivery=nil }
+        } message: { Text("Ponowienie używa tego samego identyfikatora wiadomości Matrix i nie uruchamia ponownie zadania Hermesa.") }
+    }
+    private func taskDetails(_ task:TaskRecord) -> some View {
             VStack(alignment:.leading,spacing:12) {
-                Text("Zadanie \(task.id.prefix(8))").font(.title2)
+                HStack {
+                    Button { selected=nil } label: { Label("Wróć do zadań",systemImage:"chevron.left") }
+                    Spacer();Text("Zadanie \(task.id.prefix(8))").font(.title2)
+                }
                 Text(Runtime.stateLabel(task.state)).font(.headline)
                 ScrollView {
                     VStack(alignment:.leading,spacing:12) {
@@ -129,25 +169,24 @@ struct Dashboard:View {
                 HStack {
                     Button("Otwórz Hermes") { runtime.openHermes() }
                     Text("BOTS → Indexa").font(.caption).foregroundStyle(.secondary)
-                    Spacer();Button("Zamknij") { selected=nil }.keyboardShortcut(.cancelAction)
+                    Spacer()
                 }
-            }.padding(24).frame(width:620,height:480)
+            }.padding(16).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
         }
-        .sheet(isPresented:$diagnostics) {
-            VStack(alignment:.leading) { Text("Podgląd diagnostyki").font(.title2);Text("Bez transkrypcji, odpowiedzi i sekretów.").foregroundStyle(.secondary)
-                ScrollView { Text(runtime.diagnosticText()).font(.caption.monospaced()).textSelection(.enabled) }
-                HStack { Button("Zapisz…") { exportDiagnostics() };Button("Zamknij") { diagnostics=false } }
-            }.padding().frame(width:620,height:420)
-        }
-        .confirmationDialog("Zamknąć sprawdzone operacje notatek?",isPresented:$confirmNotes) {
-            Button("Potwierdzam sprawdzenie") { runtime.resolveNotes(noteReview);noteReview=[] }
-        } message: { Text("Potwierdzasz sprawdzenie \(noteReview.count) operacji w folderze Indexa w Notatkach. Odblokujemy kolejne zapisy; żadna z tych operacji nie zostanie powtórzona. Zadania wymagające sprawdzenia zamknij po sprawdzeniu także ich pozostałych skutków.") }
-        .confirmationDialog("Potwierdzasz ręczne sprawdzenie skutków zadania?",isPresented:Binding(get:{review != nil},set:{if !$0 { review=nil }})) {
-            Button("Zamknij bez ponawiania") { if let task=review { Task { await runtime.resolve(task) } };review=nil }
-        } message: { Text("Najpierw sprawdź dokładną notatkę i status Hermesa. Nie uruchomimy ponownie tego zadania.") }
-        .confirmationDialog("Ponowić wiadomość?",isPresented:Binding(get:{delivery != nil},set:{if !$0 { delivery=nil }})) {
-            Button("Ponów wysyłkę") { if let item=delivery { Task { await runtime.retry(item) } };delivery=nil }
-        } message: { Text("Ponowienie używa tego samego identyfikatora wiadomości Matrix i nie uruchamia ponownie zadania Hermesa.") }
+}
+
+struct DiagnosticsView:View {
+    @ObservedObject var runtime:Runtime
+    var body:some View {
+        VStack(alignment:.leading,spacing:16) {
+            Text("Diagnostyka").font(.title2)
+            Text("Bez transkrypcji, odpowiedzi i sekretów.").foregroundStyle(.secondary)
+            ScrollView {
+                Text(runtime.diagnosticText()).font(.caption.monospaced()).textSelection(.enabled)
+                    .frame(maxWidth:.infinity,alignment:.leading)
+            }
+            Button("Zapisz diagnostykę…") { exportDiagnostics() }
+        }.padding(24)
     }
     private func exportDiagnostics() {
         let panel=NSSavePanel();panel.nameFieldStringValue="indexa-diagnostics.txt"
@@ -157,6 +196,7 @@ struct Dashboard:View {
 
 struct SettingsView:View {
     @ObservedObject var runtime:Runtime
+    let page:AppPage
     @ObservedObject private var updater=Updater.shared
     @State private var password=""
     @State private var copiedField=""
@@ -173,8 +213,12 @@ struct SettingsView:View {
     @State private var matrixToken=""
     @State private var matrixPickle=""
     @State private var matrixPassword=""
+    @State private var loaded=false
     var body:some View {
-        TabView {
+        Group {
+            if page == .matrix && showQR {
+                ScrollView { QRLoginView(runtime:runtime,onClose:{ showQR=false }).frame(maxWidth:.infinity) }
+            } else if page == .matrix {
             Form {
                 if runtime.vaultUnlocked && runtime.matrixCredentialsMissing {
                     Section("Dane Matrix do nowego sejfu") {
@@ -226,7 +270,8 @@ struct SettingsView:View {
                         }
                     }
                 }
-            }.formStyle(.grouped).tabItem { Label("Matrix",systemImage:"bubble.left.and.bubble.right") }
+            }.formStyle(.grouped)
+            } else if page == .pebble {
             Form {
                 Section("Webhook Pebble") {
                     Text("Double click & hold → Webhook only → Transcription only").font(.callout)
@@ -246,7 +291,8 @@ struct SettingsView:View {
                     }
                 }
                 Button("Zapisz ustawienia webhooka") { save() }
-            }.formStyle(.grouped).tabItem { Label("Pierścień",systemImage:"waveform") }
+            }.formStyle(.grouped)
+            } else {
             Form {
                 Section("Aktualizacje") {
                     Button("Sprawdź aktualizacje…") { updater.checkForUpdates() }
@@ -273,11 +319,19 @@ struct SettingsView:View {
                     Text("Ta retencja dotyczy wyłącznie lokalnej kolejki Indexy. Nie usuwa historii Hermesa, wiadomości Matrix ani notatek. Aktywne zadania i niedostarczone odpowiedzi pozostają do wyjaśnienia.").font(.caption)
                     Button("Zapisz retencję") { save() }
                 }
-            }.formStyle(.grouped).tabItem { Label("Aplikacja",systemImage:"gear") }
+            }.formStyle(.grouped)
+            }
         }.padding(12)
-        .sheet(isPresented:$showQR) { QRLoginView(runtime:runtime) }
-        .onAppear { signed=runtime.config.signedWebhooks;contentDays=runtime.config.contentRetentionDays;metadataDays=runtime.config.metadataRetentionDays }
-        .onDisappear { secret="";showSecret=false;password="";matrixToken="";matrixPickle="";matrixPassword="" }
+        .onAppear {
+            guard !loaded else { return };loaded=true
+            signed=runtime.config.signedWebhooks;contentDays=runtime.config.contentRetentionDays;metadataDays=runtime.config.metadataRetentionDays
+        }
+        .onChange(of:page) { _,_ in showQR=false;clearSecrets() }
+        .onDisappear { clearSecrets() }
+        .onReceive(NotificationCenter.default.publisher(for:NSWindow.willCloseNotification)) { notification in
+            guard (notification.object as? NSWindow)?.identifier?.rawValue == "indexa" else { return }
+            showQR=false;clearSecrets()
+        }
         .safeAreaInset(edge:.bottom) { if !runtime.notice.isEmpty { Text(runtime.notice).font(.caption).padding(12).frame(maxWidth:.infinity,alignment:.leading) } }
         .confirmationDialog("Zatwierdzić dostęp tego urządzenia do odpowiedzi Indexa?",isPresented:Binding(get:{trust != nil},set:{if !$0 { trust=nil }})) {
             Button("Zatwierdź sprawdzone urządzenie") { if let device=trust { Task { await runtime.trustDevice(device) } };trust=nil }
@@ -288,6 +342,7 @@ struct SettingsView:View {
         .confirmationDialog("Wysłać test na Matrix?",isPresented:$confirmNotification) { Button("Wyślij test") { Task { await runtime.testNotification() } } }
         .confirmationDialog("Udostępnić odbiornik w prywatnym Tailscale?",isPresented:$confirmServe) { Button("Włącz Serve") { Task { await runtime.setServe(true) } } } message: { Text("Dostęp wymaga aktywnego Tailscale na iPhonie. Udostępniamy webhook i prosty health; API Hermesa pozostaje na Macu.") }
     }
+    private func clearSecrets() { secret="";showSecret=false;password="";matrixToken="";matrixPickle="";matrixPassword="" }
     private func copyButton(_ title:String,enabled:Bool,sensitive:Bool=false,value:@escaping ()->String) -> some View {
         Button {
             let text=value()

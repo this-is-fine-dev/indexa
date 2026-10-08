@@ -4,7 +4,7 @@ import CoreImage.CIFilterBuiltins
 
 struct QRLoginView:View {
     @ObservedObject var runtime:Runtime
-    @Environment(\.dismiss) private var dismiss
+    let onClose:()->Void
     @State private var state=[String:Any]()
     @State private var code=""
     @State private var error=""
@@ -17,7 +17,10 @@ struct QRLoginView:View {
     private var phase:String { state["state"] as? String ?? "starting" }
     var body:some View {
         VStack(spacing:16) {
-            Text("Logowanie Element X").font(.title2)
+            HStack {
+                Button { onClose() } label: { Label("Wróć do Matrix",systemImage:"chevron.left") }
+                Spacer();Text("Logowanie Element X").font(.title2)
+            }
             switch phase {
             case "qr":
                 Text("Włącz Tailscale na iPhonie. W Element X wybierz logowanie kodem QR i zeskanuj ten kod.")
@@ -57,8 +60,8 @@ struct QRLoginView:View {
                 Text("Połączenie zostanie ponowione automatycznie.").font(.caption)
                 Button("Wygeneruj nowy kod") { Task { await start() } }.disabled(busy)
             }
-            Button(phase == "done" ? "Gotowe":"Anuluj") { dismiss() }.keyboardShortcut(.cancelAction)
-        }.padding(24).frame(width:600).frame(minHeight:240)
+            Button(phase == "done" ? "Gotowe":"Anuluj") { onClose() }.keyboardShortcut(.cancelAction)
+        }.padding(24).frame(maxWidth:680).frame(minHeight:240)
         .task {
             await start()
             while !Task.isCancelled {
