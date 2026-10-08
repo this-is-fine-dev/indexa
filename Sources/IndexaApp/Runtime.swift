@@ -27,6 +27,14 @@ final class Runtime:ObservableObject {
     @Published var loginEnabled=SMAppService.mainApp.status == .enabled
     var db:Database?
     private var app:Application?
+    var mcpServer:Application?
+    var mcpManager:MCPManager?
+    // Separate vault keeps rollback to older Indexa versions compatible.
+    let mcpSecrets=SecretStore(url:Configuration.directory.appendingPathComponent("mcp-secrets.vault"))
+    @Published var mcpStatus="Uruchamianie…"
+    @Published var mcpNotice=""
+    @Published var mcpModules=[MCPModuleState]()
+    @Published var mcpActivity=[MCPAuditEntry]()
     private var agent:AgentWorker?
     private var sharedConversation:SharedConversation?
     private var receiver:MatrixReceiver?
@@ -99,6 +107,8 @@ final class Runtime:ObservableObject {
             guard generation == startupGeneration else {
                 if let app { await app.http.server.shared.shutdown();try? await app.asyncShutdown();self.app=nil };return
             }
+            await startMCP()
+            guard generation == startupGeneration else { await stopMCP();return }
             try launchGateway(key:key)
             try launchMatrix()
             try setupMatrix()
@@ -109,7 +119,7 @@ final class Runtime:ObservableObject {
             loops.append(poll(every:2) {
                 do { try await self.outboxWorker?.tick() } catch { if !Task.isCancelled { self.notice=Self.message(error) } }
             })
-            loops.append(poll(every:2) { await self.refreshRecords() })
+            loops.append(poll(every:2) { await self.refreshRecords();await self.refreshMCP() })
             loops.append(Task { [weak self] in
                 var iteration=0
                 while !Task.isCancelled {
@@ -350,6 +360,7 @@ final class Runtime:ObservableObject {
         return result
     }
     private func drain() async -> Bool {
+        await stopMCP()
         ready=false;matrixConnected=false;hermesConnected=false;matrixQRAvailable=false
         let pending=loops;loops.removeAll()
         pending.forEach { $0.cancel() }

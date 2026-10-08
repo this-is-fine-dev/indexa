@@ -48,5 +48,21 @@ class NotesTests(unittest.TestCase):
                 notes.handle(later)
                 self.assertEqual(invoke.call_count,2)
 
+    def test_standalone_core_replays_completed_write_and_denies_before_write(self):
+        import json, tempfile, uuid
+        with tempfile.TemporaryDirectory() as directory:
+            args={'action':'create','title':'Synthetic','text':'Synthetic','operation_id':str(uuid.uuid4())}
+            with patch.object(notes,'invoke',return_value={'verified':True,'note_id':'x-coredata://synthetic'}) as invoke:
+                denied=json.loads(notes.handle_core(args,directory,lambda _:False))
+                self.assertEqual(denied['error'],'permission_denied')
+                self.assertEqual(invoke.call_count,0)
+                first=json.loads(notes.handle_core(args,directory,lambda _:True))
+                second=json.loads(notes.handle_core(args,directory,lambda _:True))
+                self.assertEqual(first,second)
+                self.assertEqual(invoke.call_count,1)
+                conflict=json.loads(notes.handle_core({**args,'text':'different'},directory,lambda _:True))
+                self.assertEqual(conflict['error'],'operation_id_conflict')
+                self.assertEqual(invoke.call_count,1)
+
 if __name__ == '__main__':
     unittest.main()

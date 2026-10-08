@@ -11,6 +11,8 @@ import uuid
 def validate(args):
     if not isinstance(args, dict) or args.get('action') not in ('create', 'append', 'read'):
         raise ValueError('invalid_action')
+    if set(args) - {'action', 'title', 'text', 'note_id', 'operation_id'}:
+        raise ValueError('unknown_field')
     for field in ('title', 'text', 'note_id', 'operation_id'):
         if field in args and (not isinstance(args[field], str) or len(args[field].encode()) > 16384):
             raise ValueError('invalid_' + field)
@@ -39,13 +41,12 @@ def invoke(args):
     return value
 
 
-def handle(args, **kwargs):
+def handle_core(args, profile_home, approve):
     try:
         validate(args)
         if args['action'] == 'read':
             return json.dumps(invoke(args), ensure_ascii=False)
-        from hermes_cli.config import get_hermes_home
-        ledger = get_hermes_home() / 'indexa-notes.sqlite'
+        ledger = pathlib.Path(profile_home) / 'indexa-notes.sqlite'
         with ledger.with_suffix('.lock').open('a') as lock, sqlite3.connect(ledger, timeout=5) as db:
             ledger.with_suffix('.lock').chmod(0o600)
             # Native review uses this same lock; a live write can never be marked reviewed.
@@ -61,9 +62,7 @@ def handle(args, **kwargs):
                 return prior[2] or json.dumps({'error': 'operation_unknown_do_not_repeat', 'needs_review': True})
             if db.execute("SELECT 1 FROM operations WHERE state='pending' LIMIT 1").fetchone():
                 return json.dumps({'error': 'previous_write_needs_review', 'needs_review': True})
-            from tools.approval import request_tool_approval
-            consent = request_tool_approval('indexa_notes', 'Utworzenie notatki w folderze Indexa' if args['action'] == 'create' else 'Dopisanie tekstu do wskazanej notatki Indexa', rule_key='indexa-notes-' + args['operation_id'])
-            if not consent.get('approved'):
+            if not approve(args):
                 return json.dumps({'error': 'permission_denied', 'written': False})
             db.execute('BEGIN IMMEDIATE')
             # Recheck under the write lock after the potentially long approval wait.
@@ -86,6 +85,14 @@ def handle(args, **kwargs):
         return json.dumps({'error': 'notes_timeout_do_not_repeat', 'needs_review': True})
     except Exception:
         return json.dumps({'error': 'notes_unavailable', 'needs_review': True})
+
+
+def handle(args, **kwargs):
+    from hermes_cli.config import get_hermes_home
+    from tools.approval import request_tool_approval
+    def approve(request):
+        return request_tool_approval('indexa_notes', 'Utworzenie notatki w folderze Indexa' if request['action'] == 'create' else 'Dopisanie tekstu do wskazanej notatki Indexa', rule_key='indexa-notes-' + request['operation_id']).get('approved', False)
+    return handle_core(args, get_hermes_home(), approve)
 
 
 def register(ctx):

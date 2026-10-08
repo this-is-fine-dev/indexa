@@ -27,6 +27,18 @@ Dane aplikacji są w `~/Library/Application Support/Indexa`, a profil agenta w `
 
 Tailscale zapewnia prywatny transport. Indexa nie potrzebuje zmian w służbowym VPN. Ustawienia retencji kolejki Indexy nie oznaczają usuwania historii z baz Matrix i Hermesa.
 
+## Własne narzędzia MCP
+
+Zakładka **Integracje → Apple Notes** udostępnia `notes_get`, `notes_create` i `notes_append`. Moduł oraz odczyt, tworzenie i dopisywanie mają osobne przełączniki; domyślnie wszystkie są wyłączone. Włączenie zapisu jest zgodą na wykonywanie poleceń agenta bez potwierdzania każdej notatki. Dostęp dotyczy wyłącznie folderu Indexa w domyślnym koncie Notatek, bez usuwania. Pierwsze użycie może wymagać systemowej zgody na automatyzację Notatek.
+
+MCP słucha tylko na `127.0.0.1:43121`; Notes ma endpoint `/mcp/notes`. Każdy kolejny moduł otrzyma oddzielny endpoint i sesje. Transport negocjuje MCP Streamable HTTP w wersjach 2025-03-26, 2025-06-18 lub 2025-11-25. Powiadomienia `tools/list_changed` aktualizują listę narzędzi; także wywołanie wcześniej zapamiętanego narzędzia ponownie sprawdza uprawnienia. Wyłączenie nie cofa już rozpoczętej operacji. Zamknięcie aplikacji czeka na zakończenie wywołań.
+
+Token 256-bitowy znajduje się w oddzielnym sejfie `mcp-secrets.vault`, bez Keychain. „Kopiuj konfigurację dla Hermesa” kopiuje także token i czyści niezmieniony schowek po minucie. Rotacja zamyka sesje i unieważnia poprzedni token; następnie trzeba zaktualizować konfigurację klientów. W Hermesie sekret powinien trafić do `.env` (0600), a nagłówek konfiguracji wskazywać `Bearer ${INDEXA_MCP_TOKEN}`. Stary plugin `indexa-notes` należy wyłączyć przez CLI Hermesa i przeładować działające procesy; pozostawienie go włączonego daje osobną drogę do notatek poza MCP. Nie dotyczy to innych narzędzi, które użytkownik niezależnie udostępnił Hermesowi.
+
+Notes MCP korzysta z dotychczasowego rejestru operacji: nowy zapis wymaga UUID `operation_id`, ponowienie tego samego zapisu tego samego UUID. Niepewny wynik blokuje dalsze zapisy do ręcznego sprawdzenia. Historia w panelu MCP obejmuje ostatnie 512 wywołań od startu serwera, bez treści notatek i argumentów. HomeKit jest odłożony; aplikacja nie publikuje atrap narzędzi Home.
+
+Zwykłe testy Swift obejmują uwierzytelnianie, sesje, SSE, cofanie uprawnień, rotację i zakończenie aktywnej operacji. Aby dodatkowo sprawdzić rzeczywisty klient MCP Hermesa, uruchom `MCP_TEST_PYTHON=/ścieżka/do/python-z-mcp bash scripts/test-local.sh`. Test używa syntetycznego modułu na porcie 43129 i nie dotyka Notatek.
+
 ## Aktualizacje
 
 Sparkle 2.9.2 sprawdza podpisane archiwa z GitHub Releases. Kanał jest przygotowany pod publiczne repozytorium; dopóki repozytorium pozostaje prywatne, pobieranie aktualizacji bez logowania nie zadziała. Token GitHub nie trafia do aplikacji.

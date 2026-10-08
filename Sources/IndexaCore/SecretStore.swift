@@ -4,6 +4,7 @@ import CommonCrypto
 import Darwin
 
 public enum SecretName:String,CaseIterable {
+    case mcpAccess = "mcp-access-token"
     case pebbleSigning = "pebble-signing-secret"
     case hermesAPI = "hermes-api-key"
     case matrixTransport = "matrix-transport-key"

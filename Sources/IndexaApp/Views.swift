@@ -40,6 +40,7 @@ struct MainView:View {
             Divider()
             Group {
                 if navigation.page == .dashboard { Dashboard(runtime:runtime) }
+                else if navigation.page == .integrations { IntegrationsView(runtime:runtime) }
                 else if navigation.page == .diagnostics { DiagnosticsView(runtime:runtime) }
                 else { SettingsView(runtime:runtime,page:navigation.page) }
             }.frame(maxWidth:.infinity,maxHeight:.infinity)
