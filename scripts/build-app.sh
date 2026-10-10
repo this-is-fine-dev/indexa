@@ -5,6 +5,7 @@ test -f "${INDEXA_SIGNING_KEY:-.signing/key.pem}" || { echo 'Missing stable Inde
 python3 scripts/prepare-codesign.py
 # Release archives never contain the vault, local runtime, Matrix history or signing seed.
 test -x matrix/qr/target/release/indexa-qr || { echo 'Missing native QR binary; run scripts/build-matrix-qr.sh first.' >&2; exit 1; }
+test -x .build/whisper-build/bin/whisper-cli && test -f .build/whisper-models/ggml-small.bin || { echo 'Missing local Whisper model; run scripts/setup-whisper.sh first.' >&2; exit 1; }
 version="${INDEXA_VERSION:-$(cat release/version.txt)}"
 [[ "$version" =~ ^[0-9]{1,3}\.[0-9]{1,2}\.[0-9]{1,2}$ ]] || { echo 'Invalid version' >&2; exit 1; }
 export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/ModuleCache"
@@ -15,11 +16,13 @@ framework='.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_
 test -d "$framework"
 app='dist/Indexa.app'
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/matrix" "$app/Contents/Resources/hermes-plugin" "$app/Contents/Frameworks"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/matrix" "$app/Contents/Resources/hermes-plugin" "$app/Contents/Resources/Whisper" "$app/Contents/Frameworks"
 cp matrix/service.py matrix/media.py matrix/qr_session.py matrix/native_services.py matrix/public_proxy.py "$app/Contents/Resources/matrix/"
 cp matrix/qr/target/release/indexa-qr "$app/Contents/Resources/matrix/"
 cp hermes-plugin/__init__.py hermes-plugin/mcp_notes.py hermes-plugin/notes.js hermes-plugin/plugin.yaml "$app/Contents/Resources/hermes-plugin/"
 cp release/stack.json scripts/prepare-runtime.py scripts/connect-hermes-mcp.py "$app/Contents/Resources/"
+cp .build/whisper-build/bin/whisper-cli .build/whisper-models/ggml-small.bin "$app/Contents/Resources/Whisper/"
+cp .build/whisper-source/LICENSE "$app/Contents/Resources/Whisper/LICENSE"
 iconset='dist/Indexa.iconset'
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
@@ -62,6 +65,7 @@ with open('dist/Indexa.app/Contents/Info.plist', 'wb') as file:
     plistlib.dump(plist, file)
 PY
 codesign --force --sign - "$app/Contents/Resources/matrix/indexa-qr"
+codesign --force --sign - "$app/Contents/Resources/Whisper/whisper-cli"
 python3 scripts/sign-app.py "$app"
 codesign --verify --deep --strict "$app"
 zip="dist/Indexa-$version.zip"

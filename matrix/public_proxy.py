@@ -40,7 +40,7 @@ async def create_proxy(pebble_port=None, *, port=18763):
                    if k.lower() not in HOP | {"host", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"}]
         headers.append(("X-Forwarded-Proto", "https"))
         if pebble:
-            limit = 256 * 1024
+            limit = 20 * 1024 * 1024
             if request.content_length is not None and request.content_length > limit:
                 raise web.HTTPRequestEntityTooLarge(max_size=limit, actual_size=request.content_length)
             body = bytearray()

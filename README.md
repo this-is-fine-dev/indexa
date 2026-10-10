@@ -25,6 +25,8 @@ Testy Matrix wymagają Pythona 3.11 z `matrix/requirements.txt`. Testy `test_mat
 
 Dane aplikacji są w `~/Library/Application Support/Indexa`, a profil agenta w `~/.hermes/profiles/indexa`. Losowy klucz lokalny odblokowuje szyfrowany sejf. Ochrona uprawnień plików nie izoluje aplikacji działających jako ten sam użytkownik macOS. Nie publikuj katalogu danych ani kluczy podpisywania.
 
+Webhook Pebble może przesłać surowe nagranie M4A (do 20 MiB). Indexa transkrybuje je lokalnie przez Whisper Small z językiem polskim, a do Hermesa i Matrixa trafia dopiero tekst. Przed budowaniem aplikacji uruchom `scripts/setup-whisper.sh`; pobiera przypięty kod whisper.cpp i model (około 466 MB), które są dołączane do aplikacji. Ustaw gest Pebble na „Webhook only” i pozostaw tryb payloadu „Recording only”.
+
 Tailscale zapewnia prywatny transport. Indexa nie potrzebuje zmian w służbowym VPN. Ustawienia retencji kolejki Indexy nie oznaczają usuwania historii z baz Matrix i Hermesa.
 
 ## Własne narzędzia MCP
@@ -55,7 +57,7 @@ Zwykłe testy Swift obejmują uwierzytelnianie, sesje, SSE, cofanie uprawnień, 
 
 ## Załączniki i statusy Matrix
 
-Prywatny, szyfrowany pokój właściciela przyjmuje zdjęcia i pliki do 20 MiB. Obrazy są zmniejszane do 2048 px i przekazywane modelowi obsługującemu obraz. Dokumenty: tekst UTF-8 do 200 KB lub PDF z warstwą tekstową do 100 stron / 200 KB tekstu. Skany PDF wymagają OCR poza Indexą; audio i wideo są na razie odrzucane czytelną odpowiedzią. Odczyt potwierdza trwałe przyjęcie wiadomości. Reakcje pokazują przyjęcie, pracę, oczekiwanie na zgodę oraz wynik zadania; problemy z reakcjami nie blokują rozmowy.
+Prywatny, szyfrowany pokój właściciela przyjmuje zdjęcia i pliki do 20 MiB. Obrazy są zmniejszane do 2048 px i przekazywane modelowi obsługującemu obraz. Dokumenty: tekst UTF-8 do 200 KB lub PDF z warstwą tekstową do 100 stron / 200 KB tekstu. Skany PDF wymagają OCR poza Indexą. Głos z Pebble trafia bezpośrednio przez webhook i jest transkrybowany lokalnie na Macu. Odczyt potwierdza trwałe przyjęcie wiadomości. Reakcje pokazują przyjęcie, pracę, oczekiwanie na zgodę oraz wynik zadania; problemy z reakcjami nie blokują rozmowy.
 
 **Pliki i raporty** udostępnia `files_create`: tworzenie TXT, MD, CSV, JSON i prostego PDF z tekstu do 100 KB. Moduł jest włączany raz przy migracji; potem respektuje przełączniki użytkownika. Zapisuje tylko w katalogu eksportów Indexy, bez dostępu do innych plików. Zwrócony `MEDIA:<path>` w osobnym wierszu odpowiedzi zamienia się w szyfrowany załącznik Matrix. Ponowienia używają tego samego `operation_id`; zmieniony eksport jest odrzucany. Wysyłka ma trwały identyfikator zapobiegający duplikatom.
 

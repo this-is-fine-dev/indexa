@@ -85,7 +85,7 @@ async def check():
                     assert response.status == 404, (method, path, response.status)
             assert len(received) == before
 
-            limit = 256 * 1024
+            limit = 20 * 1024 * 1024
             exact = b"x" * limit
             async with client.post(address + "/pebble/v1/ingest", data=exact,
                     headers={"X-Index-Signature": hmac.new(secret, exact, hashlib.sha256).hexdigest()}) as response:

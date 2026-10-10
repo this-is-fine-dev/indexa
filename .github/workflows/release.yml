@@ -83,7 +83,7 @@ jobs:
           python3 -B Tests/test_matrix_setup.py
       - name: Package app
         if: env.ALREADY_RELEASED != 'true'
-        run: bash scripts/build-app.sh
+        run: bash scripts/setup-whisper.sh && bash scripts/build-app.sh
       - name: Sign appcast
         if: env.ALREADY_RELEASED != 'true'
         env:

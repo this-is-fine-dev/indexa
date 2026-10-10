@@ -23,6 +23,7 @@ with zipfile.ZipFile(archive) as zipped:
     for required in ('MacOS/Indexa', 'Resources/Indexa.icns', 'Resources/matrix/indexa-qr', 'Resources/matrix/service.py',
                      'Resources/matrix/media.py', 'Resources/connect-hermes-mcp.py',
                      'Resources/stack.json', 'Resources/prepare-runtime.py', 'Resources/hermes-plugin/__init__.py',
+                     'Resources/Whisper/whisper-cli', 'Resources/Whisper/ggml-small.bin', 'Resources/Whisper/LICENSE',
                      'Frameworks/Sparkle.framework/Versions/B/Sparkle'):
         assert prefix + required in names, required
     assert not any(name.endswith(('.vault.key', 'private-key', 'bridge.sqlite', 'secrets.enc')) for name in names)
