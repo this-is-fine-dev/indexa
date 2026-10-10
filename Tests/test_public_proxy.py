@@ -92,7 +92,7 @@ async def check():
                 assert response.status == 202
             before = len(received)
             async def chunks():
-                for _ in range(5):
+                for _ in range(limit // (64 * 1024) + 1):
                     yield b"x" * (64 * 1024)
             for oversized in [b"x" * (limit + 1), chunks()]:
                 async with client.post(address + "/pebble/v1/ingest", data=oversized) as response:
