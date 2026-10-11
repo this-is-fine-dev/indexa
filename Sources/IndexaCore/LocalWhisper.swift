@@ -35,8 +35,12 @@ public enum LocalWhisper {
             let wave = temporary.appendingPathComponent("recording.wav")
             let output = temporary.appendingPathComponent("transcript")
             let log = temporary.appendingPathComponent("process.log")
-            try data.write(to: input, options: .atomic)
-            try run(URL(fileURLWithPath: "/usr/bin/afconvert"), ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", input.path, wave.path], log)
+            if data.starts(with: Data("RIFF".utf8)), data.count >= 12, data[8..<12] == Data("WAVE".utf8) {
+                try data.write(to: wave, options: .atomic)
+            } else {
+                try data.write(to: input, options: .atomic)
+                try run(URL(fileURLWithPath: "/usr/bin/afconvert"), ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", input.path, wave.path], log)
+            }
             let recording = try AVAudioFile(forReading: wave)
             guard recording.length > 0, Double(recording.length) / recording.fileFormat.sampleRate <= 15 * 60 else {
                 throw IndexaError("whisper_audio_duration_invalid")

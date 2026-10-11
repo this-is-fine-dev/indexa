@@ -2,6 +2,7 @@ import Foundation
 import Vapor
 
 public enum Ingress {
+    private static let maximumRequestBytes = 32 * 1024 * 1024
     private struct RetranscriptionResponse: Encodable { let transcription: String }
 
     public static func install(on app: Application, database: Database, configuration: Configuration, secret: String,
@@ -10,11 +11,11 @@ public enum Ingress {
         guard !secret.isEmpty else { throw IndexaError("secret_unavailable") }
         app.http.server.configuration.hostname = "127.0.0.1"
         app.http.server.configuration.port = configuration.port
-        app.routes.defaultMaxBodySize = "21mb"
+        app.routes.defaultMaxBodySize = "32mb"
         app.logger.logLevel = .critical
         app.get("health") { _ in ["status":"ok"] }
-        app.on(.POST,"pebble","v1","ingest",body:.collect(maxSize:"21mb")) { request async throws -> Response in
-            guard let buffer = request.body.data, buffer.readableBytes <= 21 * 1024 * 1024 else { throw Abort(.payloadTooLarge) }
+        app.on(.POST,"pebble","v1","ingest",body:.collect(maxSize:"32mb")) { request async throws -> Response in
+            guard let buffer = request.body.data, buffer.readableBytes <= maximumRequestBytes else { throw Abort(.payloadTooLarge) }
             var headers = [String:String]()
             for (name,value) in request.headers {
                 let name = name.lowercased()
@@ -85,10 +86,14 @@ public enum Ingress {
         for p in parts {
             guard let name = p.name else { throw Abort(.badRequest,reason:"invalid_field") }
             if name == "audio" {
-                guard result.audio == nil, p.filename?.lowercased().hasSuffix(".m4a") == true,
-                      let type = p.headers.first(name:"Content-Type"), type.lowercased().hasPrefix("audio/mp4"),
-                      p.body.readableBytes > 0 else { throw Abort(.unsupportedMediaType,reason:"invalid_audio") }
-                result.audio = Data(p.body.readableBytesView)
+                let filename = p.filename?.lowercased() ?? ""
+                let contentType = p.headers.first(name:"Content-Type")?.lowercased() ?? ""
+                let audio = Data(p.body.readableBytesView)
+                let isM4a = filename.hasSuffix(".m4a") && contentType.hasPrefix("audio/mp4")
+                let isWav = filename.hasSuffix(".wav") && contentType == "audio/wav" &&
+                    audio.count >= 44 && audio.starts(with:Data("RIFF".utf8)) && audio[8..<12] == Data("WAVE".utf8)
+                guard result.audio == nil, audio.count > 0, isM4a || isWav else { throw Abort(.unsupportedMediaType,reason:"invalid_audio") }
+                result.audio = audio
             } else {
                 guard ["client","recordedAt","transcription","test","reprocess"].contains(name), p.filename == nil, result.fields[name] == nil,
                       let value = String(data:Data(p.body.readableBytesView),encoding:.utf8) else { throw Abort(.badRequest,reason:"invalid_field") }

@@ -9,6 +9,39 @@ func fixture(_ fields: [(String,String)], boundary: String = "indexa-fixture") -
 }
 
 struct IngressTests {
+    @Test func reprocessAcceptsPcmWavWithoutPhoneSideM4aEncoding() async throws {
+        let wav = Data([
+            82,73,70,70,40,0,0,0,87,65,86,69,102,109,116,32,16,0,0,0,
+            1,0,1,0,128,62,0,0,0,125,0,0,2,0,16,0,100,97,116,97,4,0,0,0,
+            1,0,254,255
+        ])
+        let db = try Database(url:nil), app = try await Application.make(.testing)
+        var config = Configuration(); config.signedWebhooks = false
+        try Ingress.install(on:app,database:db,configuration:config,secret:"fixture-token",transcribe:{ data in
+            #expect(data == wav)
+            return "WAV accepted"
+        })
+        var body = Data()
+        func append(_ string: String) { body.append(contentsOf:string.utf8) }
+        for (name,value) in [
+            ("client","ring"),
+            ("recordedAt",String(Int(Date().timeIntervalSince1970*1000))),
+            ("reprocess","true"),
+        ] {
+            append("--indexa-fixture\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
+        }
+        append("--indexa-fixture\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"retry.wav\"\r\nContent-Type: audio/wav\r\n\r\n")
+        body.append(wav)
+        append("\r\n--indexa-fixture--\r\n")
+        var buffer = ByteBufferAllocator().buffer(capacity:body.count); buffer.writeBytes(body)
+        let headers: HTTPHeaders = ["Content-Type":"multipart/form-data; boundary=indexa-fixture","Authorization":"Bearer fixture-token"]
+        try await app.test(.POST,"/pebble/v1/ingest",headers:headers,body:buffer) { response async throws in
+            #expect(response.status == .accepted)
+            #expect(String(buffer:response.body) == "{\"transcription\":\"WAV accepted\"}")
+        }
+        try await app.asyncShutdown()
+    }
+
     @Test func transcribesUploadedM4aThroughInjectedLocalEngine() async throws {
         let db = try Database(url:nil), app = try await Application.make(.testing)
         var config = Configuration(); config.signedWebhooks = false
