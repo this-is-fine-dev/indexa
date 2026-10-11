@@ -64,7 +64,7 @@ public struct RunStatus {
     public var createdAt:Double? = nil
     public var completedAt:Double? = nil
 }
-public struct HermesClient {
+public struct HermesClient: Sendable {
     public let baseURL:URL
     let key:String
     let http:HTTPJSON

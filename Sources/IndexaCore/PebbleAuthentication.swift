@@ -24,7 +24,7 @@ public enum PebbleAuthentication {
               let time = TimeInterval(timestamp), time.isFinite, abs(now - time) <= 300,
               let delivery = headers["x-index-delivery"], (1...128).contains(delivery.utf8.count),
               delivery.utf8.allSatisfy({ (33...126).contains($0) }),
-              let trigger = headers["x-index-trigger"], ["single-click-hold","double-click-hold","test-event"].contains(trigger),
+              let trigger = headers["x-index-trigger"], ["single-click-hold","double-click-hold","test-event","ios-chat","ios-history"].contains(trigger),
               headers["x-index-test"] == nil || headers["x-index-test"] == "true" else { throw IndexaError("invalid_signature_headers") }
         let isTest = headers["x-index-test"] == "true"
         guard isTest == (trigger == "test-event") else { throw IndexaError("inconsistent_test") }

@@ -6,6 +6,7 @@ public enum Ingress {
     private struct RetranscriptionResponse: Encodable { let transcription: String }
 
     public static func install(on app: Application, database: Database, configuration: Configuration, secret: String,
+                               chat: HermesChatRelay? = nil,
                                transcribe: @escaping @Sendable (Data) async throws -> String = { try await LocalWhisper.transcribe($0) }) throws {
         try configuration.validate()
         guard !secret.isEmpty else { throw IndexaError("secret_unavailable") }
@@ -70,6 +71,43 @@ public enum Ingress {
             } catch let error as IndexaError where error.code == "delivery_id_conflict" { throw Abort(.conflict,reason:error.code) }
             catch { throw Abort(.serviceUnavailable,reason:parts.audio == nil ? "durable_commit_failed" : "transcription_failed") }
         }
+        if let chat {
+            app.on(.POST,"pebble","v1","chat","history",body:.collect(maxSize:"16kb")) { request async throws -> Response in
+                let body = request.body.data.map { Data($0.readableBytesView) } ?? Data()
+                try Self.verifyChatRequest(request, body: body, secret: secret, trigger: "ios-history")
+                let messages = try await chat.history()
+                return Response(status: .ok, headers: ["Content-Type":"application/json", "Cache-Control":"no-store"],
+                                body: .init(data: try JSONEncoder().encode(messages)))
+            }
+            app.on(.POST,"pebble","v1","chat","stream",body:.collect(maxSize:"96kb")) { request async throws -> Response in
+                let buffer = request.body.data
+                guard let buffer, buffer.readableBytes <= 96 * 1024 else { throw Abort(.payloadTooLarge) }
+                let body = Data(buffer.readableBytesView)
+                try Self.verifyChatRequest(request, body: body, secret: secret, trigger: "ios-chat")
+                guard let prompt = try? JSONDecoder().decode(HermesChatPrompt.self, from: body) else {
+                    throw Abort(.badRequest, reason: "invalid_chat_request")
+                }
+                let text = prompt.input.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty, text.utf8.count <= 12_000 else { throw Abort(.unprocessableEntity, reason: "invalid_chat_text") }
+                return Response(status: .ok,
+                    headers: ["Content-Type":"text/event-stream", "Cache-Control":"no-store", "X-Accel-Buffering":"no"],
+                    body: .init(managedAsyncStream: { writer in try await chat.stream(text, to: writer) }))
+            }
+        }
+    }
+
+    private static func verifyChatRequest(_ request: Request, body: Data, secret: String, trigger: String) throws {
+        var headers = [String:String]()
+        for (name, value) in request.headers {
+            let key = name.lowercased()
+            if key.hasPrefix("x-index-") {
+                guard headers[key] == nil, value.utf8.count <= 1024 else { throw Abort(.badRequest) }
+                headers[key] = value
+            }
+        }
+        guard headers["x-index-trigger"] == trigger else { throw Abort(.unauthorized, reason: "unauthorized") }
+        do { try PebbleAuthentication.verify(body: body, headers: headers, secret: secret, signed: true) }
+        catch { throw Abort(.unauthorized, reason: "unauthorized") }
     }
 
     private struct Parts { var fields = [String:String](); var audio: Data? }

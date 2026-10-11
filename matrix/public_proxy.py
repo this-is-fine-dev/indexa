@@ -27,11 +27,13 @@ async def create_proxy(pebble_port=None, *, port=18763):
     pebble_base = ("http://127.0.0.1:" + pebble_port
                    if re.fullmatch(r"[0-9]{1,5}", pebble_port) and 1 <= int(pebble_port) <= 65535
                    and int(pebble_port) != port else None)
-    session = ClientSession(timeout=ClientTimeout(total=90), auto_decompress=False)
+    session = ClientSession(timeout=ClientTimeout(total=None, sock_connect=10, sock_read=90), auto_decompress=False)
 
     async def proxy(request):
         pebble = request.path.startswith("/pebble")
-        base = (pebble_base if request.method == "POST" and request.rel_url.raw_path_qs == "/pebble/v1/ingest" else None) if pebble else target(request.path)
+        base = (pebble_base if request.method == "POST" and request.path in {
+            "/pebble/v1/ingest", "/pebble/v1/chat/stream", "/pebble/v1/chat/history"
+        } and not request.query_string else None) if pebble else target(request.path)
         if not base:
             raise web.HTTPNotFound()
         # aiohttp collapses mixed-case duplicates unless names are normalized first.
@@ -40,7 +42,8 @@ async def create_proxy(pebble_port=None, *, port=18763):
                    if k.lower() not in HOP | {"host", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"}]
         headers.append(("X-Forwarded-Proto", "https"))
         if pebble:
-            limit = 20 * 1024 * 1024
+            limit = (20 * 1024 * 1024 if request.path.endswith("/ingest") else
+                     96 * 1024 if request.path.endswith("/stream") else 16 * 1024)
             if request.content_length is not None and request.content_length > limit:
                 raise web.HTTPRequestEntityTooLarge(max_size=limit, actual_size=request.content_length)
             body = bytearray()
@@ -54,6 +57,13 @@ async def create_proxy(pebble_port=None, *, port=18763):
             async with session.request(request.method, base + request.rel_url.raw_path_qs,
                     headers=headers, data=body, allow_redirects=False) as response:
                 forwarded = [(k, v) for k, v in response.headers.items() if k.lower() not in HOP]
+                if response.headers.get("Content-Type", "").startswith("text/event-stream"):
+                    stream = web.StreamResponse(status=response.status, headers=forwarded)
+                    await stream.prepare(request)
+                    async for chunk in response.content.iter_chunked(8192):
+                        await stream.write(chunk)
+                    await stream.write_eof()
+                    return stream
                 return web.Response(status=response.status, headers=forwarded, body=await response.read())
         except (TimeoutError, OSError):
             raise web.HTTPBadGateway()

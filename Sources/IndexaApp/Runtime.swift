@@ -67,6 +67,7 @@ final class Runtime:ObservableObject {
     private let tailscale=TailscaleClient()
     private var matrixFailures=0
     private var hermesFailures=0
+    private var chatRelay:HermesChatRelay?
     private var starting=false
     private var startupGeneration=UUID()
     private var stopTask:Task<Bool,Never>?
@@ -112,6 +113,7 @@ final class Runtime:ObservableObject {
             guard generation == startupGeneration else { return }
             let webhookSecret=try secrets.getOrCreate(.pebbleSigning),key=try secrets.getOrCreate(.hermesAPI)
             let hermes=HermesClient(baseURL:URL(string:config.hermesURL)!,key:key)
+            chatRelay=HermesChatRelay(hermes:hermes)
             agent=AgentWorker(database:database,hermes:hermes)
             sharedConversation=SharedConversation(database:database,hermes:hermes)
             await agent?.setPaused(paused)
@@ -177,7 +179,7 @@ final class Runtime:ObservableObject {
         guard let db else { throw IndexaError("database_unavailable") }
         let server=try await Application.make(.init(name:"production",arguments:["Indexa"]))
         do {
-            try Ingress.install(on:server,database:db,configuration:config,secret:secret)
+            try Ingress.install(on:server,database:db,configuration:config,secret:secret,chat:chatRelay)
             try await server.http.server.shared.start(address:.hostname("127.0.0.1",port:config.port))
             app=server;receiverStatus="Nasłuchuje na 127.0.0.1:\(config.port)"
         } catch { try? await server.asyncShutdown();throw error }

@@ -21,6 +21,12 @@ async def check():
     async def receiver(request):
         body = await request.read()
         received.append((request.method, request.raw_path, body, request.raw_headers))
+        if request.path == "/pebble/v1/chat/stream":
+            response = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+            await response.prepare(request)
+            await response.write(b"event: assistant.delta\ndata: {\"delta\":\"hello\"}\n\n")
+            await response.write_eof()
+            return response
         signature = hmac.new(secret, body, hashlib.sha256).hexdigest()
         signatures = request.headers.getall("X-Index-Signature", [])
         if len(signatures) > 1 or len(request.headers.getall("Authorization", [])) > 1:
@@ -54,6 +60,19 @@ async def check():
             assert (b"authorization", b"Bearer synthetic") in received[-1][3]
             assert (b"X-Forwarded-Proto", b"https") in received[-1][3]
 
+            async with client.post(address + "/pebble/v1/chat/stream", data=b"{}") as response:
+                assert response.status == 200
+                assert response.headers["Content-Type"].startswith("text/event-stream")
+                assert await response.text() == 'event: assistant.delta\ndata: {"delta":"hello"}\n\n'
+            assert received[-1][1:3] == ("/pebble/v1/chat/stream", b"{}")
+            chat_limit = 96 * 1024
+            async with client.post(address + "/pebble/v1/chat/stream", data=b"x" * chat_limit) as response:
+                assert response.status == 200
+            before = len(received)
+            async with client.post(address + "/pebble/v1/chat/stream", data=b"x" * (chat_limit + 1)) as response:
+                assert response.status == 413
+            assert len(received) == before
+
             async with client.post(address + "/pebble/v1/ingest", data=body) as response:
                 assert response.status == 401 and await response.text() == "unauthorized"
                 assert response.headers["WWW-Authenticate"] == "Bearer"
@@ -80,6 +99,7 @@ async def check():
             before = len(received)
             for method, path in [(verb, "/pebble/v1/ingest") for verb in ["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"]] + [
                 ("POST", path) for path in ["/pebble", "/pebble/v1/ingest/", "/pebble/v1/ingest?x=1", "/pebble/v1/health",
+                "/pebble/v1/chat/stream/", "/pebble/v1/chat/history?x=1", "/pebble/v1/other",
                 "/pebble/admin", "/pebble-other", "/%70ebble/v1/ingest", "/pebble%2Fv1%2Fingest", "/health", "/api/admin", "/_synapse/admin/v1/users"]]:
                 async with client.request(method, URL(address + path, encoded=True), data=body) as response:
                     assert response.status == 404, (method, path, response.status)
