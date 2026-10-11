@@ -31,6 +31,35 @@ struct IngressTests {
         try await app.asyncShutdown()
     }
 
+    @Test func reprocessReturnsTranscriptWithoutCreatingHermesTask() async throws {
+        let db = try Database(url:nil), app = try await Application.make(.testing)
+        var config = Configuration(); config.signedWebhooks = false
+        try Ingress.install(on:app,database:db,configuration:config,secret:"fixture-token",transcribe:{ data in
+            #expect(data == Data([0x01,0x02,0x03]))
+            return "Nowa transkrypcja"
+        })
+        var body = Data()
+        func append(_ string: String) { body.append(contentsOf:string.utf8) }
+        for (name,value) in [
+            ("client","ring"),
+            ("recordedAt",String(Int(Date().timeIntervalSince1970*1000))),
+            ("reprocess","true"),
+        ] {
+            append("--indexa-fixture\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
+        }
+        append("--indexa-fixture\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"recording.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n")
+        body.append(contentsOf:[0x01,0x02,0x03])
+        append("\r\n--indexa-fixture--\r\n")
+        var buffer = ByteBufferAllocator().buffer(capacity:body.count); buffer.writeBytes(body)
+        let headers: HTTPHeaders = ["Content-Type":"multipart/form-data; boundary=indexa-fixture","Authorization":"Bearer fixture-token"]
+        try await app.test(.POST,"/pebble/v1/ingest",headers:headers,body:buffer) { response async throws in
+            #expect(response.status == .accepted)
+            #expect(String(buffer:response.body) == "{\"transcription\":\"Nowa transkrypcja\"}")
+        }
+        #expect(try await db.tasks().isEmpty)
+        try await app.asyncShutdown()
+    }
+
     @Test func signedRecordingGesturesPersistOnceAndTestsNeverStartTasks() async throws {
         let db = try Database(url:nil), app = try await Application.make(.testing)
         let secret = "fixture-signing-key"

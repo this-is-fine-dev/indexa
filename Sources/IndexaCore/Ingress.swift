@@ -2,6 +2,8 @@ import Foundation
 import Vapor
 
 public enum Ingress {
+    private struct RetranscriptionResponse: Encodable { let transcription: String }
+
     public static func install(on app: Application, database: Database, configuration: Configuration, secret: String,
                                transcribe: @escaping @Sendable (Data) async throws -> String = { try await LocalWhisper.transcribe($0) }) throws {
         try configuration.validate()
@@ -34,8 +36,11 @@ public enum Ingress {
                   ms/1000 <= Date().timeIntervalSince1970+300,
                   parts.audio != nil || suppliedText?.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty == false,
                   (suppliedText?.utf8.count ?? 0) <= 16384,
-                  fields["test"] == nil || fields["test"] == "true" else { throw Abort(.unprocessableEntity,reason:"invalid_fields") }
+                  fields["test"] == nil || fields["test"] == "true",
+                  fields["reprocess"] == nil || fields["reprocess"] == "true" else { throw Abort(.unprocessableEntity,reason:"invalid_fields") }
             guard fields["test"] != "true" || parts.audio == nil else { throw Abort(.unprocessableEntity,reason:"invalid_test_event") }
+            let reprocess = fields["reprocess"] == "true"
+            guard !reprocess || (parts.audio != nil && suppliedText == nil && fields["test"] != "true") else { throw Abort(.unprocessableEntity,reason:"invalid_reprocess") }
             if let version = headers["x-index-webhook-version"], version != "1" { throw Abort(.badRequest,reason:"unsupported_version") }
             let isTest = fields["test"] == "true" || headers["x-index-test"] == "true" || headers["x-index-trigger"] == "test-event"
             if configuration.signedWebhooks {
@@ -52,6 +57,13 @@ public enum Ingress {
                 let text: String
                 if let audio = parts.audio { text = try await transcribe(audio) }
                 else { text = fields["transcription"]! }
+                if reprocess {
+                    return Response(
+                        status:.accepted,
+                        headers:["Content-Type":"application/json","Cache-Control":"no-store"],
+                        body:.init(data:try JSONEncoder().encode(RetranscriptionResponse(transcription:text)))
+                    )
+                }
                 let result = try await database.accept(source:"pebble",sourceID:sourceID,text:text,recorded:ms/1000,digest:digest,isTest:isTest)
                 return Response(status:.accepted,headers:["Content-Type":"application/json"],body:.init(string:"{\"id\":\"\(result.id)\",\"duplicate\":\(result.duplicate),\"test\":\(isTest)}"))
             } catch let error as IndexaError where error.code == "delivery_id_conflict" { throw Abort(.conflict,reason:error.code) }
@@ -78,7 +90,7 @@ public enum Ingress {
                       p.body.readableBytes > 0 else { throw Abort(.unsupportedMediaType,reason:"invalid_audio") }
                 result.audio = Data(p.body.readableBytesView)
             } else {
-                guard ["client","recordedAt","transcription","test"].contains(name), p.filename == nil, result.fields[name] == nil,
+                guard ["client","recordedAt","transcription","test","reprocess"].contains(name), p.filename == nil, result.fields[name] == nil,
                       let value = String(data:Data(p.body.readableBytesView),encoding:.utf8) else { throw Abort(.badRequest,reason:"invalid_field") }
                 result.fields[name] = value
             }
