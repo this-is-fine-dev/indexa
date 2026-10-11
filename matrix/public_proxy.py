@@ -30,10 +30,10 @@ async def create_proxy(pebble_port=None, *, port=18763):
     session = ClientSession(timeout=ClientTimeout(total=None, sock_connect=10, sock_read=90), auto_decompress=False)
 
     async def proxy(request):
-        pebble = request.path.startswith("/pebble")
-        base = (pebble_base if request.method == "POST" and request.path in {
+        pebble = request.raw_path.startswith("/pebble")
+        base = (pebble_base if request.method == "POST" and request.raw_path in {
             "/pebble/v1/ingest", "/pebble/v1/chat/stream", "/pebble/v1/chat/history"
-        } and not request.query_string else None) if pebble else target(request.path)
+        } else None) if pebble else target(request.path)
         if not base:
             raise web.HTTPNotFound()
         # aiohttp collapses mixed-case duplicates unless names are normalized first.
@@ -42,8 +42,8 @@ async def create_proxy(pebble_port=None, *, port=18763):
                    if k.lower() not in HOP | {"host", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"}]
         headers.append(("X-Forwarded-Proto", "https"))
         if pebble:
-            limit = (20 * 1024 * 1024 if request.path.endswith("/ingest") else
-                     96 * 1024 if request.path.endswith("/stream") else 16 * 1024)
+            limit = (20 * 1024 * 1024 if request.raw_path == "/pebble/v1/ingest" else
+                     96 * 1024 if request.raw_path == "/pebble/v1/chat/stream" else 16 * 1024)
             if request.content_length is not None and request.content_length > limit:
                 raise web.HTTPRequestEntityTooLarge(max_size=limit, actual_size=request.content_length)
             body = bytearray()
