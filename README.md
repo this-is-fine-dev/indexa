@@ -17,7 +17,7 @@ python3 -B Tests/test_runtime_update.py
 bash scripts/build-app.sh
 ```
 
-Wynik: `dist/Indexa.app` i `dist/Indexa-<wersja>.zip`. Wersja pochodzi z `release/version.txt`, a w CI z tagu `vX.Y.Z`. Brak binarnego pomocnika QR zatrzymuje pakowanie.
+Wynik: `dist/Indexa.app` i `dist/Indexa-<wersja>.zip`. Lokalny build bierze wersję z ostatniego taga i zwiększa patch dla zmian po nim; bez tagów używa `release/version.txt`. CI przy wydaniu bierze wersję z taga `vX.Y.Z`. Brak binarnego pomocnika QR zatrzymuje pakowanie.
 
 Testy Matrix wymagają Pythona 3.11 z `matrix/requirements.txt`. Testy `test_matrix_media.py`, `test_matrix_journal.py`, `test_matrix_qr_boundaries.py`, `test_bot_identity.py`, `test_matrix_crypto.py` i `test_matrix_setup.py` działają na danych tymczasowych. Testy z `live` w nazwie korzystają z prawdziwej instalacji i nie są wykonywane automatycznie w CI.
 
@@ -69,6 +69,6 @@ Sparkle 2.9.2 sprawdza podpisane archiwa z GitHub Releases. Publiczny kanał nie
 
 Procedura wydania, zakres aktualizacji i odzyskiwanie: [docs/RELEASE.md](docs/RELEASE.md).
 
-Aplikacja jest instalowana w `/Applications/Indexa.app`. `python3 scripts/install-app.py` przenosi poprzednią kopię z `~/Applications`, odmawia instalacji podczas aktywnego zadania, sprawdza podpis i uruchamia aplikację. Dane pozostają w katalogu użytkownika. Kolejne wydania publikuj jako GitHub Release z podpisanym `appcast.xml`; samo wypchnięcie kodu nie udostępnia aktualizacji.
+Aplikacja jest instalowana w `/Applications/Indexa.app`. `python3 scripts/install-app.py` przenosi poprzednią kopię z `~/Applications`, odmawia instalacji podczas aktywnego zadania, sprawdza podpis i uruchamia aplikację. Dane pozostają w katalogu użytkownika. Po zacommitowaniu zmian uruchom `scripts/release.sh`: skrypt zwiększy numer patch, utworzy tag i wypchnie go do CI. GitHub Actions zbuduje podpisaną paczkę i `appcast.xml`; notatki wydania utworzą się z tytułów commitów, jeśli nie dodano pliku `release-notes/X.Y.Z.md`.
 
 Od 0.5.3 budowanie wymaga istniejącego klucza podpisu `.signing/key.pem` (0600) i publicznego certyfikatu z repozytorium. Brak klucza blokuje wydanie, zamiast zmieniać tożsamość aplikacji i tracić zgody macOS. Podpisywanie nie używa Keychain. Szczegóły w [procedurze wydania](docs/RELEASE.md#stała-tożsamość-aplikacji-od-053).

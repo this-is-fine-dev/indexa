@@ -6,7 +6,17 @@ python3 scripts/prepare-codesign.py
 # Release archives never contain the vault, local runtime, Matrix history or signing seed.
 test -x matrix/qr/target/release/indexa-qr || { echo 'Missing native QR binary; run scripts/build-matrix-qr.sh first.' >&2; exit 1; }
 test -x .build/whisper-build/bin/whisper-cli && test -f .build/whisper-models/ggml-small.bin || { echo 'Missing local Whisper model; run scripts/setup-whisper.sh first.' >&2; exit 1; }
-version="${INDEXA_VERSION:-$(cat release/version.txt)}"
+version="${INDEXA_VERSION:-}"
+if [[ -z "$version" ]]; then
+  latest_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+  version="${latest_tag#v}"
+  if [[ -n "$latest_tag" && ( $(git rev-parse HEAD) != $(git rev-list -n 1 "$latest_tag") || -n $(git status --porcelain) ) ]]; then
+    IFS=. read -r major minor patch <<< "$version"
+    version="$major.$minor.$((patch + 1))"
+  elif [[ -z "$latest_tag" ]]; then
+    version=$(cat release/version.txt)
+  fi
+fi
 [[ "$version" =~ ^[0-9]{1,3}\.[0-9]{1,2}\.[0-9]{1,2}$ ]] || { echo 'Invalid version' >&2; exit 1; }
 export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/ModuleCache"
 export CLANG_MODULE_CACHE_PATH="$SWIFTPM_MODULECACHE_OVERRIDE"

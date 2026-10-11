@@ -14,7 +14,7 @@ struct MenuView:View {
         Button(runtime.paused ? "Wznów zadania":"Wstrzymaj nowe zadania") { Task { await runtime.togglePause() } }
         Button("Połącz ponownie…") { confirmReconnect=true }.disabled(runtime.restarting)
         Divider()
-        Button("Sprawdź aktualizacje…") { Updater.shared.checkForUpdates() }
+        Button("Sprawdź aktualizacje… (v\(Updater.shared.version))") { Updater.shared.checkForUpdates() }
         Button("Zakończ Indexa") { NSApp.terminate(nil) }.keyboardShortcut("q")
             .confirmationDialog("Uruchomić ponownie lokalne usługi?",isPresented:$confirmReconnect) {
                 Button("Uruchom ponownie") { Task { await runtime.reconnect() } }
@@ -433,7 +433,7 @@ struct SettingsView:View {
             } else {
             Form {
                 Section("Aktualizacje") {
-                    Button("Sprawdź aktualizacje…") { updater.checkForUpdates() }
+                    Button("Sprawdź aktualizacje… (v\(updater.version))") { updater.checkForUpdates() }
                     Text(updater.status).font(.caption)
                 }
                 Section("Działanie") {

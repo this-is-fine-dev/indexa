@@ -10,9 +10,9 @@ Python, MAS i PostgreSQL pozostają poza aplikacją. Hermes również pozostaje 
 
 ## Publikacja
 
-1. Zaktualizuj `release/version.txt` i opcjonalnie dodaj `release-notes/X.Y.Z.md`.
-2. Uruchom testy i zbuduj aplikację. Sprawdź istniejącą instalację bez resetowania Matrixa.
-3. Utwórz i wypchnij tag `vX.Y.Z`. `.github/workflows/release.yml` buduje natywne QR, testuje Swift/Python, pakuje aplikację, podpisuje ZIP i publikuje ZIP oraz `appcast.xml` w tym samym repozytorium.
+1. Zacommituj zmiany na `main` i uruchom `scripts/release.sh`.
+2. Skrypt pobiera tagi, zwiększa numer patch, sprawdza czyste drzewo oraz synchronizację z `origin/main`, a następnie atomowo wypycha `main` i nowy tag. Tag uruchamia `.github/workflows/release.yml`, który buduje natywne QR, uruchamia testy Swift/Python, pakuje aplikację, podpisuje ZIP i publikuje ZIP oraz `appcast.xml`.
+3. Poczekaj na sukces workflow przed sprawdzeniem aktualizacji w aplikacji. Notatki wydania powstają z tytułów commitów; jeśli potrzebujesz własnych, dodaj `release-notes/X.Y.Z.md` przed uruchomieniem skryptu.
 
 Workflow używa `SPARKLE_PRIVATE_KEY` z GitHub Actions Secrets. Własny klucz Indexy utworzono bez Keychain; lokalna kopia znajduje się w ignorowanym `.sparkle/private-key` z uprawnieniami `0600`. W repozytorium jest tylko `release/sparkle-public-key.txt`. Nie uruchamiaj generatora ponownie dla kolejnej wersji. Utrata lub zmiana klucza wymaga osobnej procedury rotacji Sparkle.
 

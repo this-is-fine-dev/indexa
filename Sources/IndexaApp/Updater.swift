@@ -5,6 +5,7 @@ import Sparkle
 final class Updater: ObservableObject {
     static let shared = Updater()
     @Published private(set) var status = "Aktualizacje nie są jeszcze skonfigurowane."
+    var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—" }
     private var controller: SPUStandardUpdaterController?
     private var observation: NSKeyValueObservation?
 
