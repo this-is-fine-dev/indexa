@@ -1,8 +1,9 @@
 import AppKit
 import Sparkle
+import IndexaCore
 
 @MainActor
-final class Updater: ObservableObject {
+final class Updater: NSObject, ObservableObject, SPUUpdaterDelegate {
     static let shared = Updater()
     @Published private(set) var status = "Aktualizacje nie są jeszcze skonfigurowane."
     var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—" }
@@ -15,8 +16,12 @@ final class Updater: ObservableObject {
               let url = URL(string: feed), url.scheme == "https", url.host != nil,
               let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String,
               Data(base64Encoded: key)?.count == 32 else { return }
-        controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
         status = "Po pobraniu aktualizacji wybierz „Zainstaluj i uruchom ponownie”. Indexa sama wznowi usługi."
+    }
+
+    func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+        LocalWhisper.migrateBundledModel()
     }
 
     func checkForUpdates() {

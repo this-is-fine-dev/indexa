@@ -5,7 +5,7 @@ test -f "${INDEXA_SIGNING_KEY:-.signing/key.pem}" || { echo 'Missing stable Inde
 python3 scripts/prepare-codesign.py
 # Release archives never contain the vault, local runtime, Matrix history or signing seed.
 test -x matrix/qr/target/release/indexa-qr || { echo 'Missing native QR binary; run scripts/build-matrix-qr.sh first.' >&2; exit 1; }
-test -x .build/whisper-build/bin/whisper-cli && test -f .build/whisper-models/ggml-small.bin || { echo 'Missing local Whisper model; run scripts/setup-whisper.sh first.' >&2; exit 1; }
+test -x .build/whisper-build/bin/whisper-cli || { echo 'Missing whisper-cli; run scripts/setup-whisper.sh first.' >&2; exit 1; }
 version="${INDEXA_VERSION:-}"
 if [[ -z "$version" ]]; then
   latest_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
@@ -31,7 +31,7 @@ cp matrix/service.py matrix/media.py matrix/qr_session.py matrix/native_services
 cp matrix/qr/target/release/indexa-qr "$app/Contents/Resources/matrix/"
 cp hermes-plugin/__init__.py hermes-plugin/mcp_notes.py hermes-plugin/notes.js hermes-plugin/plugin.yaml "$app/Contents/Resources/hermes-plugin/"
 cp release/stack.json scripts/prepare-runtime.py scripts/connect-hermes-mcp.py "$app/Contents/Resources/"
-cp .build/whisper-build/bin/whisper-cli .build/whisper-models/ggml-small.bin "$app/Contents/Resources/Whisper/"
+cp .build/whisper-build/bin/whisper-cli "$app/Contents/Resources/Whisper/"
 cp .build/whisper-source/LICENSE "$app/Contents/Resources/Whisper/LICENSE"
 iconset='dist/Indexa.iconset'
 mkdir -p "$iconset"

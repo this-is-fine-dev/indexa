@@ -25,7 +25,7 @@ Testy Matrix wymagają Pythona 3.11 z `matrix/requirements.txt`. Testy `test_mat
 
 Dane aplikacji są w `~/Library/Application Support/Indexa`, a profil agenta w `~/.hermes/profiles/indexa`. Losowy klucz lokalny odblokowuje szyfrowany sejf. Ochrona uprawnień plików nie izoluje aplikacji działających jako ten sam użytkownik macOS. Nie publikuj katalogu danych ani kluczy podpisywania.
 
-Webhook Pebble może przesłać surowe nagranie M4A (do 20 MiB). Indexa transkrybuje je lokalnie przez Whisper Small z językiem polskim, a do Hermesa i Matrixa trafia dopiero tekst. Przed budowaniem aplikacji uruchom `scripts/setup-whisper.sh`; pobiera przypięty kod whisper.cpp i model (około 466 MB), które są dołączane do aplikacji. Ustaw gest Pebble na „Webhook only” i pozostaw tryb payloadu „Recording only”.
+Webhook Pebble może przesłać surowe nagranie M4A (do 20 MiB). Indexa transkrybuje je lokalnie przez Whisper Small z językiem polskim, a do Hermesa i Matrixa trafia dopiero tekst. Przed budowaniem aplikacji uruchom `scripts/setup-whisper.sh`; pobiera przypięty kod whisper.cpp. Model (około 466 MB) jest przechowywany poza aplikacją w `~/Library/Application Support/Indexa/Whisper` i pobiera się przy pierwszej transkrypcji. Aktualizacja przenosi go ze starszej wersji aplikacji, więc nie trzeba pobierać go ponownie. Ustaw gest Pebble na „Webhook only” i pozostaw tryb payloadu „Recording only”.
 
 Tailscale zapewnia prywatny transport. Indexa nie potrzebuje zmian w służbowym VPN. Ustawienia retencji kolejki Indexy nie oznaczają usuwania historii z baz Matrix i Hermesa.
 
